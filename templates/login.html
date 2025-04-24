@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Gallery - Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="login-form">
+            <h1>Go Gallery</h1>
+            <p>Enter password to access your encrypted gallery</p>
+
+            {{if .Error}}
+            <div class="error-message">{{.Error}}</div>
+            {{end}}
+
+            <form action="/login" method="POST">
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" name="password" required autofocus>
+                </div>
+                <button type="submit" class="btn btn-primary">Access Gallery</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
