@@ -4,17 +4,25 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/pem"
 	"flag"
 	"fmt"
 	"html/template"
 	"io"
 	"log"
+	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
@@ -48,6 +56,9 @@ func main() {
 	// Parse command-line flags
 	port := flag.String("port", "8080", "Port to listen on")
 	host := flag.String("host", "localhost", "Host IP address to bind to")
+	enableSSL := flag.Bool("ssl", false, "Enable HTTPS with self-signed certificates")
+	certFile := flag.String("cert", "cert.pem", "Path to SSL certificate file")
+	keyFile := flag.String("key", "key.pem", "Path to SSL key file")
 	flag.Parse()
 
 	// Create gallery directory if it doesn't exist
@@ -77,8 +88,108 @@ func main() {
 	serverAddr := fmt.Sprintf("%s:%s", *host, *port)
 
 	// Start the server
-	fmt.Printf("Server started at http://%s:%s\n", *host, *port)
-	log.Fatal(http.ListenAndServe(serverAddr, r))
+	if *enableSSL {
+		// Check if certificate files exist, if not generate them
+		_, err1 := os.Stat(*certFile)
+		_, err2 := os.Stat(*keyFile)
+
+		if os.IsNotExist(err1) || os.IsNotExist(err2) {
+			log.Println("SSL certificates not found, generating self-signed certificates...")
+			err := generateSelfSignedCert(*certFile, *keyFile)
+			if err != nil {
+				log.Fatalf("Failed to generate SSL certificates: %v", err)
+			}
+			log.Printf("Generated self-signed certificates at %s and %s", *certFile, *keyFile)
+		}
+
+		// Configure TLS
+		tlsConfig := &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		}
+
+		server := &http.Server{
+			Addr:      serverAddr,
+			Handler:   r,
+			TLSConfig: tlsConfig,
+		}
+
+		fmt.Printf("Server started with HTTPS at https://%s:%s\n", *host, *port)
+		log.Fatal(server.ListenAndServeTLS(*certFile, *keyFile))
+	} else {
+		fmt.Printf("Server started at http://%s:%s\n", *host, *port)
+		log.Fatal(http.ListenAndServe(serverAddr, r))
+	}
+}
+
+// generateSelfSignedCert generates a self-signed certificate and key
+func generateSelfSignedCert(certPath, keyPath string) error {
+	// Generate private key
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return err
+	}
+
+	// Set certificate properties
+	notBefore := time.Now()
+	notAfter := notBefore.Add(365 * 24 * time.Hour) // Valid for 1 year
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		return err
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Go Crypto Gallery"},
+			CommonName:   "localhost",
+		},
+		NotBefore:             notBefore,
+		NotAfter:              notAfter,
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+	}
+
+	// Add IP address to the certificate
+	template.IPAddresses = append(template.IPAddresses, net.ParseIP("127.0.0.1"))
+
+	// Create certificate
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return err
+	}
+
+	// Write certificate to file
+	certOut, err := os.Create(certPath)
+	if err != nil {
+		return err
+	}
+	defer certOut.Close()
+
+	err = pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	if err != nil {
+		return err
+	}
+
+	// Write private key to file
+	keyOut, err := os.Create(keyPath)
+	if err != nil {
+		return err
+	}
+	defer keyOut.Close()
+
+	err = pem.Encode(keyOut, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 // indexHandler shows the login page or redirects to gallery if already logged in

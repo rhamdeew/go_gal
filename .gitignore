@@ -30,3 +30,6 @@ Thumbs.db
 
 # Gallery
 gallery/*.enc
+
+# SSL certificates
+*.pem

@@ -13,6 +13,7 @@ A password-protected web gallery application written in Go. All folders and file
 - Image preview before uploading
 - Modern and responsive UI
 - No server-side password storage for enhanced security
+- HTTPS support with self-signed certificates
 
 ## Security Features
 
@@ -20,6 +21,7 @@ A password-protected web gallery application written in Go. All folders and file
 - File contents are encrypted with AES-256
 - No passwords are stored on the server, only used for encryption/decryption
 - Session-based authentication with secure cookies
+- Optional HTTPS with TLS 1.2+ for secure connections
 
 ## Requirements
 
@@ -55,15 +57,28 @@ A password-protected web gallery application written in Go. All folders and file
    ./go_gal --host=0.0.0.0 --port=9000
    ```
 
+   To enable HTTPS with self-signed certificates:
+   ```
+   ./go_gal --ssl=true
+   ```
+
    Available command line arguments:
    ```
-   --host=<ip>      : Specify the host IP address (default: 127.0.0.1)
-   --port=<number>  : Specify the port number (default: 8080)
+   --host=<ip>       : Specify the host IP address (default: 127.0.0.1)
+   --port=<number>   : Specify the port number (default: 8080)
+   --ssl=true/false  : Enable HTTPS with self-signed certificates (default: false)
+   --cert=<path>     : Specify a custom path for the SSL certificate (default: cert.pem)
+   --key=<path>      : Specify a custom path for the SSL private key (default: key.pem)
    ```
 
 2. Open your web browser and go to:
    ```
    http://localhost:8080
+   ```
+
+   Or if SSL is enabled:
+   ```
+   https://localhost:8080
    ```
 
    Or if you used custom host/port:
@@ -85,6 +100,7 @@ A password-protected web gallery application written in Go. All folders and file
 - **Remember your password!** If you forget it, there is no way to recover your encrypted files since the password is not stored anywhere.
 - When creating a new gallery, the first password you enter will be the one used for encryption.
 - For security purposes, encryption/decryption happens on the server side, but the password is not stored permanently.
+- When using self-signed certificates, your browser may show a security warning. You can safely proceed for personal use.
 
 ## License
 
