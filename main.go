@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"flag"
 	"fmt"
 	"html/template"
 	"io"
@@ -44,6 +45,11 @@ type PageData struct {
 }
 
 func main() {
+	// Parse command-line flags
+	port := flag.String("port", "8080", "Port to listen on")
+	host := flag.String("host", "localhost", "Host IP address to bind to")
+	flag.Parse()
+
 	// Create gallery directory if it doesn't exist
 	if _, err := os.Stat(galleryDir); os.IsNotExist(err) {
 		err = os.MkdirAll(galleryDir, 0755)
@@ -67,9 +73,12 @@ func main() {
 	// Set up static file server for CSS, JS
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 
+	// Construct server address from flags
+	serverAddr := fmt.Sprintf("%s:%s", *host, *port)
+
 	// Start the server
-	fmt.Println("Server started at http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", r))
+	fmt.Printf("Server started at http://%s:%s\n", *host, *port)
+	log.Fatal(http.ListenAndServe(serverAddr, r))
 }
 
 // indexHandler shows the login page or redirects to gallery if already logged in
