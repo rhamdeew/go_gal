@@ -9,6 +9,8 @@ A password-protected web gallery application written in Go. All folders and file
 - Files are decrypted on-the-fly when viewed
 - Create new folders with encrypted names
 - Upload images to your gallery
+- Multi-file upload support with drag-and-drop interface
+- Image preview before uploading
 - Modern and responsive UI
 - No server-side password storage for enhanced security
 
@@ -38,14 +40,25 @@ A password-protected web gallery application written in Go. All folders and file
 
 3. Build the application:
    ```
-   go build -o gallery
+   go build -o go_gal
    ```
 
 ## Usage
 
 1. Run the application:
    ```
-   ./gallery
+   ./go_gal
+   ```
+
+   You can also specify custom host and port:
+   ```
+   ./go_gal --host=0.0.0.0 --port=9000
+   ```
+
+   Available command line arguments:
+   ```
+   --host=<ip>      : Specify the host IP address (default: 127.0.0.1)
+   --port=<number>  : Specify the port number (default: 8080)
    ```
 
 2. Open your web browser and go to:
@@ -53,12 +66,18 @@ A password-protected web gallery application written in Go. All folders and file
    http://localhost:8080
    ```
 
+   Or if you used custom host/port:
+   ```
+   http://<host>:<port>
+   ```
+
 3. Enter your password to access the gallery. This password will be used to encrypt and decrypt your files.
 
 4. You can now:
    - Browse your encrypted gallery
    - Create new directories
-   - Upload images
+   - Upload images by selecting files or using drag-and-drop
+   - See image previews before uploading
    - View images by clicking on them
 
 ## Important Notes
