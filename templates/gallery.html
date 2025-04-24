@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go Gallery</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header class="gallery-header">
+            <h1>Go Gallery</h1>
+            <div class="header-actions">
+                <a href="/logout" class="btn btn-small">Logout</a>
+            </div>
+        </header>
+
+        {{if .Error}}
+        <div class="error-message">{{.Error}}</div>
+        {{end}}
+
+        <div class="current-path">
+            <span>Current path: {{.CurrentPath}}</span>
+            {{if ne .CurrentPath "/"}}
+            <a href="/gallery/" class="path-link">Home</a>
+            {{end}}
+        </div>
+
+        <div class="gallery-controls">
+            <div class="upload-section">
+                <h3>Upload Image</h3>
+                <form action="/upload" method="POST" enctype="multipart/form-data">
+                    <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
+                    <div class="form-group">
+                        <input type="file" name="file" accept="image/*" required>
+                    </div>
+                    <button type="submit" class="btn">Upload</button>
+                </form>
+            </div>
+
+            <div class="create-dir-section">
+                <h3>Create Directory</h3>
+                <form action="/createdir" method="POST">
+                    <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
+                    <div class="form-group">
+                        <input type="text" name="dirName" placeholder="Directory name" required>
+                    </div>
+                    <button type="submit" class="btn">Create</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="gallery-items">
+            {{if .Items}}
+                {{range .Items}}
+                    <div class="gallery-item">
+                        {{if .IsDir}}
+                            <a href="/gallery/{{.Path}}" class="folder">
+                                <div class="folder-icon">📁</div>
+                                <span>{{.Name}}</span>
+                            </a>
+                        {{else}}
+                            <a href="/view/{{.Path}}" target="_blank" class="image-item">
+                                <div class="image-preview" style="background-image: url('/view/{{.Path}}')"></div>
+                                <span>{{.Name}}</span>
+                            </a>
+                        {{end}}
+                    </div>
+                {{end}}
+            {{else}}
+                <div class="empty-gallery">
+                    <p>No items found in this directory</p>
+                </div>
+            {{end}}
+        </div>
+    </div>
+</body>
+</html>
