@@ -8,6 +8,9 @@ build:
 run: build
 	./go_gal
 
+run-ssl: build
+	./go_gal --ssl --cert=cert.pem --key=key.pem --port=8443
+
 clean:
 	rm -f go_gal
 
