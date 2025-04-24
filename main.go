@@ -276,34 +276,78 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Handle file upload
-	file, header, err := r.FormFile("file")
+	// Parse the multipart form with a reasonable max memory
+	err = r.ParseMultipartForm(10 << 20) // 10 MB max memory
 	if err != nil {
-		http.Error(w, "Error receiving file", http.StatusBadRequest)
-		return
-	}
-	defer file.Close()
-
-	// Read file data
-	fileData, err := io.ReadAll(file)
-	if err != nil {
-		http.Error(w, "Error reading file", http.StatusInternalServerError)
+		http.Error(w, "Error parsing form", http.StatusBadRequest)
 		return
 	}
 
-	// Encrypt the filename
-	encFileName, err := encryptFileName(header.Filename, passwordHash)
-	if err != nil {
-		http.Error(w, "Error encrypting filename", http.StatusInternalServerError)
-		return
-	}
+	// Check if the request contains multiple files or a single file
+	files := r.MultipartForm.File["files"]
+	if len(files) == 0 {
+		// Fallback to the old "file" field name for backward compatibility
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, "No files received", http.StatusBadRequest)
+			return
+		}
+		defer file.Close()
 
-	// Encrypt and save the file
-	encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
-	err = encryptAndSaveFile(fileData, encryptedPath, passwordHash)
-	if err != nil {
-		http.Error(w, "Error saving encrypted file", http.StatusInternalServerError)
-		return
+		// Process the single file
+		fileData, err := io.ReadAll(file)
+		if err != nil {
+			http.Error(w, "Error reading file", http.StatusInternalServerError)
+			return
+		}
+
+		// Encrypt the filename
+		encFileName, err := encryptFileName(header.Filename, passwordHash)
+		if err != nil {
+			http.Error(w, "Error encrypting filename", http.StatusInternalServerError)
+			return
+		}
+
+		// Encrypt and save the file
+		encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
+		err = encryptAndSaveFile(fileData, encryptedPath, passwordHash)
+		if err != nil {
+			http.Error(w, "Error saving encrypted file", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		// Process multiple files
+		for _, fileHeader := range files {
+			// Open the uploaded file
+			file, err := fileHeader.Open()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error opening file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+			defer file.Close()
+
+			// Read file data
+			fileData, err := io.ReadAll(file)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error reading file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+
+			// Encrypt the filename
+			encFileName, err := encryptFileName(fileHeader.Filename, passwordHash)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error encrypting filename %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+
+			// Encrypt and save the file
+			encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
+			err = encryptAndSaveFile(fileData, encryptedPath, passwordHash)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error saving encrypted file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+		}
 	}
 
 	// Construct proper redirect path

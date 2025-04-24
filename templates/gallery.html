@@ -28,14 +28,17 @@
 
         <div class="gallery-controls">
             <div class="upload-section">
-                <h3>Upload Image</h3>
-                <form action="/upload" method="POST" enctype="multipart/form-data">
-                    <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
-                    <div class="form-group">
-                        <input type="file" name="file" accept="image/*" required>
-                    </div>
-                    <button type="submit" class="btn">Upload</button>
-                </form>
+                <h3>Upload Images</h3>
+                <div id="drop-area" class="drop-area">
+                    <p>Drag & drop images here or click to select files</p>
+                    <form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data">
+                        <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
+                        <input type="file" id="file-input" name="files" accept="image/*" multiple required style="display:none;">
+                        <button type="button" id="select-files-btn" class="btn">Select Files</button>
+                    </form>
+                    <div id="file-list" class="file-list"></div>
+                    <button id="upload-btn" class="btn" style="display:none;">Upload Files</button>
+                </div>
             </div>
 
             <div class="create-dir-section">
@@ -74,5 +77,108 @@
             {{end}}
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const dropArea = document.getElementById('drop-area');
+            const fileInput = document.getElementById('file-input');
+            const fileList = document.getElementById('file-list');
+            const uploadBtn = document.getElementById('upload-btn');
+            const selectFilesBtn = document.getElementById('select-files-btn');
+            const uploadForm = document.getElementById('upload-form');
+
+            // Prevent default drag behaviors
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, preventDefaults, false);
+                document.body.addEventListener(eventName, preventDefaults, false);
+            });
+
+            // Highlight drop area when item is dragged over it
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropArea.addEventListener(eventName, highlight, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropArea.addEventListener(eventName, unhighlight, false);
+            });
+
+            // Handle dropped files
+            dropArea.addEventListener('drop', handleDrop, false);
+
+            // Handle file input change
+            fileInput.addEventListener('change', handleFiles);
+
+            // Handle select files button click
+            selectFilesBtn.addEventListener('click', () => {
+                fileInput.click();
+            });
+
+            // Handle upload button click
+            uploadBtn.addEventListener('click', () => {
+                uploadForm.submit();
+            });
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            function highlight() {
+                dropArea.classList.add('highlight');
+            }
+
+            function unhighlight() {
+                dropArea.classList.remove('highlight');
+            }
+
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+
+                // Update file input with dropped files
+                fileInput.files = files;
+                handleFiles();
+            }
+
+            function handleFiles() {
+                const files = fileInput.files;
+                if (files.length > 0) {
+                    fileList.innerHTML = '';
+                    uploadBtn.style.display = 'inline-block';
+
+                    Array.from(files).forEach(file => {
+                        const fileItem = document.createElement('div');
+                        fileItem.className = 'file-item';
+
+                        // Create preview for image files
+                        if (file.type.startsWith('image/')) {
+                            const img = document.createElement('img');
+                            img.className = 'file-preview';
+                            img.file = file;
+                            fileItem.appendChild(img);
+
+                            const reader = new FileReader();
+                            reader.onload = (function(aImg) {
+                                return function(e) {
+                                    aImg.src = e.target.result;
+                                };
+                            })(img);
+                            reader.readAsDataURL(file);
+                        }
+
+                        const fileInfo = document.createElement('div');
+                        fileInfo.className = 'file-info';
+                        fileInfo.textContent = file.name;
+                        fileItem.appendChild(fileInfo);
+
+                        fileList.appendChild(fileItem);
+                    });
+                } else {
+                    fileList.innerHTML = '';
+                    uploadBtn.style.display = 'none';
+                }
+            }
+        });
+    </script>
 </body>
 </html>
