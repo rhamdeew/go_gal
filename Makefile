@@ -1,4 +1,4 @@
-.PHONY: build run clean all
+.PHONY: build run clean all test test-coverage
 
 all: build
 
@@ -16,3 +16,10 @@ clean:
 
 deps:
 	go mod download
+
+test:
+	go test -v ./...
+
+test-coverage:
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out
