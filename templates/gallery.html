@@ -63,7 +63,7 @@
                                 <span>{{.Name}}</span>
                             </a>
                         {{else}}
-                            <a href="/view/{{.Path}}" target="_blank" class="image-item">
+                            <a href="javascript:void(0);" class="image-item" data-image="/view/{{.Path}}" data-detail="/view/{{.Path}}" data-name="{{.Name}}">
                                 <div class="image-preview" style="background-image: url('/view/{{.Path}}')"></div>
                                 <span>{{.Name}}</span>
                             </a>
@@ -75,6 +75,22 @@
                     <p>No items found in this directory</p>
                 </div>
             {{end}}
+        </div>
+    </div>
+
+    <!-- Modal Window for Image Viewing -->
+    <div id="image-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="modal-image-name"></h2>
+                <a id="detail-link" href="#" target="_blank" class="btn btn-small">View Full Size</a>
+                <span class="close">&times;</span>
+            </div>
+            <div class="modal-body">
+                <button id="prev-btn" class="nav-btn prev-btn">&lt;</button>
+                <img id="modal-image" src="" alt="Image">
+                <button id="next-btn" class="nav-btn next-btn">&gt;</button>
+            </div>
         </div>
     </div>
 
@@ -177,6 +193,90 @@
                     fileList.innerHTML = '';
                     uploadBtn.style.display = 'none';
                 }
+            }
+
+            // Modal Image Gallery
+            const modal = document.getElementById('image-modal');
+            const modalImg = document.getElementById('modal-image');
+            const modalName = document.getElementById('modal-image-name');
+            const detailLink = document.getElementById('detail-link');
+            const prevBtn = document.getElementById('prev-btn');
+            const nextBtn = document.getElementById('next-btn');
+            const closeBtn = document.querySelector('.close');
+            const imageItems = document.querySelectorAll('.image-item');
+
+            let currentIndex = 0;
+            const images = Array.from(imageItems).map(item => ({
+                src: item.getAttribute('data-image'),
+                detail: item.getAttribute('data-detail'),
+                name: item.getAttribute('data-name')
+            }));
+
+            // Open the modal and show the clicked image
+            imageItems.forEach((item, index) => {
+                item.addEventListener('click', function() {
+                    modal.style.display = 'block';
+                    currentIndex = index;
+                    showCurrentImage();
+                });
+            });
+
+            // Close the modal
+            closeBtn.addEventListener('click', function() {
+                modal.style.display = 'none';
+            });
+
+            // Click outside to close
+            window.addEventListener('click', function(event) {
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+
+            // Navigate to previous image
+            prevBtn.addEventListener('click', showPrevImage);
+
+            // Navigate to next image
+            nextBtn.addEventListener('click', showNextImage);
+
+            // Keyboard navigation
+            document.addEventListener('keydown', function(event) {
+                if (modal.style.display === 'block') {
+                    if (event.key === 'ArrowLeft') {
+                        showPrevImage();
+                    } else if (event.key === 'ArrowRight') {
+                        showNextImage();
+                    } else if (event.key === 'Escape') {
+                        modal.style.display = 'none';
+                    }
+                }
+            });
+
+            function showCurrentImage() {
+                if (images.length === 0) return;
+
+                const image = images[currentIndex];
+                modalImg.src = image.src;
+                modalName.textContent = image.name;
+                detailLink.href = image.detail;
+
+                // Show/hide navigation buttons based on available images
+                prevBtn.style.visibility = images.length > 1 ? 'visible' : 'hidden';
+                nextBtn.style.visibility = images.length > 1 ? 'visible' : 'hidden';
+            }
+
+            function showPrevImage() {
+                if (images.length <= 1) return;
+
+                currentIndex = (currentIndex - 1 + images.length) % images.length;
+                showCurrentImage();
+            }
+
+            function showNextImage() {
+                if (images.length <= 1) return;
+
+                currentIndex = (currentIndex + 1) % images.length;
+                showCurrentImage();
             }
         });
     </script>
