@@ -76,7 +76,8 @@ jobs:
         with:
           name: go_gal_${{ matrix.goos }}_${{ matrix.goarch }}
           path: |
-            go_gal_${{ matrix.goos }}_${{ matrix.goarch }}*
+            go_gal_${{ matrix.goos }}_${{ matrix.goarch }}*.*
+            go_gal_${{ matrix.goos }}_${{ matrix.goarch }}
           if-no-files-found: error
 
   release:
@@ -93,6 +94,10 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: find artifacts -type f | sort
 
       - name: Create Release
         id: create_release
