@@ -86,7 +86,7 @@ func TestEncryptDecryptFileName(t *testing.T) {
 		"test.txt",
 		"folder/subfolder/file.jpg",
 		"special_chars!@#.pdf",
-		"",  // Empty string
+		"", // Empty string
 	}
 
 	passwordHash := hashPassword("testpassword")

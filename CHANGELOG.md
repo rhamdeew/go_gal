@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.11] - 2025-06-10
+
+### Fixed
+- Fixes to get better score from goreportcard
+
+## [0.0.10] - 2025-06-05
+
+### Fixed
+- Fixed install.sh and uninstall.sh, Use gogal:gogal user/group for systemd.service
+
+## [0.0.9] - 2025-05-20
+
+### Fixed
+- SSL configuration for systemd.service
+
 ## [0.0.8] - 2025-05-15
 
 ### Added

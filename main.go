@@ -33,7 +33,7 @@ import (
 // Global variables
 var (
 	// Get executable directory for loading templates
-	execDir       = func() string {
+	execDir = func() string {
 		execPath, err := os.Executable()
 		if err != nil {
 			log.Println("Warning: Could not determine executable path, using current directory")
@@ -41,11 +41,25 @@ var (
 		}
 		return filepath.Dir(execPath)
 	}()
-	templates     *template.Template
-	store         = sessions.NewCookieStore([]byte("gocrypto-gallery-session-key"))
-	saltBytes     = []byte("gallery-salt") // Salt for password hashing
-	galleryDir    = filepath.Join(execDir, "gallery")
-	encryptedExt  = ".enc" // Extension for encrypted files
+	templates *template.Template
+	store     = func() *sessions.CookieStore {
+		sessionKey := os.Getenv("GO_GAL_SESSION_KEY")
+		if sessionKey == "" {
+			log.Println("Warning: Using default session key. For production, set GO_GAL_SESSION_KEY environment variable.")
+			sessionKey = "gocrypto-gallery-session-key"
+		}
+		return sessions.NewCookieStore([]byte(sessionKey))
+	}()
+	saltBytes = func() []byte {
+		salt := os.Getenv("GO_GAL_SALT")
+		if salt == "" {
+			log.Println("Warning: Using default salt. For production, set GO_GAL_SALT environment variable.")
+			salt = "gallery-salt"
+		}
+		return []byte(salt)
+	}()
+	galleryDir   = filepath.Join(execDir, "gallery")
+	encryptedExt = ".enc" // Extension for encrypted files
 )
 
 // Initialize the cookie store with proper options
@@ -66,20 +80,24 @@ func init() {
 		}
 	}
 
+	// Detect if SSL/TLS is enabled through environment variable
+	sslEnabled := os.Getenv("GO_GAL_SSL_ENABLED") == "true"
+
 	store.Options = &sessions.Options{
 		Path:     "/",
 		MaxAge:   15 * 60, // 15 minutes
 		HttpOnly: true,
+		Secure:   sslEnabled, // Only set to true when running with HTTPS
 		SameSite: http.SameSiteLaxMode,
 	}
 }
 
 // GalleryItem represents a file or folder in the gallery
 type GalleryItem struct {
-	Name     string
-	IsDir    bool
-	Path     string
-	EncPath  string // Encrypted path name (for display)
+	Name    string
+	IsDir   bool
+	Path    string
+	EncPath string // Encrypted path name (for display)
 }
 
 // PageData contains data for template rendering
@@ -98,9 +116,16 @@ func main() {
 	keyFile := flag.String("key", "key.pem", "Path to SSL key file")
 	flag.Parse()
 
+	// Set SSL environment variable based on command-line flag
+	if *enableSSL {
+		if err := os.Setenv("GO_GAL_SSL_ENABLED", "true"); err != nil {
+			log.Printf("Warning: Failed to set GO_GAL_SSL_ENABLED environment variable: %v", err)
+		}
+	}
+
 	// Create gallery directory if it doesn't exist
 	if _, err := os.Stat(galleryDir); os.IsNotExist(err) {
-		err = os.MkdirAll(galleryDir, 0755)
+		err = os.MkdirAll(galleryDir, 0750)
 		if err != nil {
 			log.Fatalf("Failed to create gallery directory: %v", err)
 		}
@@ -146,16 +171,28 @@ func main() {
 		}
 
 		server := &http.Server{
-			Addr:      serverAddr,
-			Handler:   r,
-			TLSConfig: tlsConfig,
+			Addr:              serverAddr,
+			Handler:           r,
+			TLSConfig:         tlsConfig,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
 		}
 
 		fmt.Printf("Server started with HTTPS at https://%s:%s\n", *host, *port)
 		log.Fatal(server.ListenAndServeTLS(*certFile, *keyFile))
 	} else {
 		fmt.Printf("Server started at http://%s:%s\n", *host, *port)
-		log.Fatal(http.ListenAndServe(serverAddr, r))
+		server := &http.Server{
+			Addr:              serverAddr,
+			Handler:           r,
+			ReadTimeout:       15 * time.Second,
+			WriteTimeout:      15 * time.Second,
+			ReadHeaderTimeout: 5 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		log.Fatal(server.ListenAndServe())
 	}
 }
 
@@ -247,14 +284,20 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		errorMsg = "Incorrect password. Please try again."
 	}
 
-	templates.ExecuteTemplate(w, "login.html", PageData{Error: errorMsg})
+	if err := templates.ExecuteTemplate(w, "login.html", PageData{Error: errorMsg}); err != nil {
+		log.Printf("Error executing login template: %v", err)
+		http.Error(w, "Error rendering login page", http.StatusInternalServerError)
+	}
 }
 
 // loginHandler processes the login form
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	password := r.FormValue("password")
 	if password == "" {
-		templates.ExecuteTemplate(w, "login.html", PageData{Error: "Password required"})
+		if err := templates.ExecuteTemplate(w, "login.html", PageData{Error: "Password required"}); err != nil {
+			log.Printf("Error executing login template: %v", err)
+			http.Error(w, "Error rendering login page", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -263,7 +306,10 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	session, err := store.Get(r, "gallery-session")
 	if err != nil {
 		log.Printf("Failed to get session: %v", err)
-		templates.ExecuteTemplate(w, "login.html", PageData{Error: "Session error, please try again"})
+		if err := templates.ExecuteTemplate(w, "login.html", PageData{Error: "Session error, please try again"}); err != nil {
+			log.Printf("Error executing login template: %v", err)
+			http.Error(w, "Error rendering login page", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -272,7 +318,10 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	if err := session.Save(r, w); err != nil {
 		log.Printf("Failed to save session: %v", err)
-		templates.ExecuteTemplate(w, "login.html", PageData{Error: "Failed to save session"})
+		if err := templates.ExecuteTemplate(w, "login.html", PageData{Error: "Failed to save session"}); err != nil {
+			log.Printf("Error executing login template: %v", err)
+			http.Error(w, "Error rendering login page", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -307,13 +356,33 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 		requestPath = "/"
 	}
 
-	// Construct the actual file system path
-	fsPath := filepath.Join(galleryDir, requestPath)
+	// Sanitize the path to prevent directory traversal
+	cleanPath := filepath.Clean(requestPath)
+	cleanPath = strings.Replace(cleanPath, "\\", "/", -1) // Normalize backslashes
+	if cleanPath != "/" && strings.HasPrefix(cleanPath, "/") {
+		cleanPath = cleanPath[1:] // Remove leading slash for proper joining
+	}
+
+	// Ensure we're not accessing anything outside gallery directory
+	fsPath := filepath.Join(galleryDir, cleanPath)
+	if !strings.HasPrefix(fsPath, galleryDir) {
+		if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
+			Error: "Invalid directory path",
+		}); err != nil {
+			log.Printf("Error executing template: %v", err)
+			http.Error(w, "Error rendering template", http.StatusInternalServerError)
+		}
+		return
+	}
+
 	info, err := os.Stat(fsPath)
 	if os.IsNotExist(err) {
-		templates.ExecuteTemplate(w, "gallery.html", PageData{
+		if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
 			Error: "Path does not exist",
-		})
+		}); err != nil {
+			log.Printf("Error executing template: %v", err)
+			http.Error(w, "Error rendering template", http.StatusInternalServerError)
+		}
 		return
 	}
 
@@ -349,7 +418,7 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			itemPath := filepath.Join(requestPath, name)
+			itemPath := filepath.Join(cleanPath, name)
 			// Remove leading slash if present
 			if itemPath != "/" && strings.HasPrefix(itemPath, "/") {
 				itemPath = itemPath[1:]
@@ -369,17 +438,22 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 		// Invalidate the user's session
 		session.Values["authenticated"] = false
 		session.Values["password_hash"] = ""
-		session.Save(r, w)
+		if err := session.Save(r, w); err != nil {
+			log.Printf("Error saving session: %v", err)
+		}
 
 		// Redirect to login page with error
 		http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
 		return
 	}
 
-	templates.ExecuteTemplate(w, "gallery.html", PageData{
-		CurrentPath: requestPath,
+	if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
+		CurrentPath: cleanPath,
 		Items:       items,
-	})
+	}); err != nil {
+		log.Printf("Error executing template: %v", err)
+		http.Error(w, "Error rendering template", http.StatusInternalServerError)
+	}
 }
 
 // viewHandler decrypts and serves a file for viewing
@@ -411,8 +485,20 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize the path to prevent directory traversal
+	cleanPath := filepath.Clean(requestPath)
+	cleanPath = strings.Replace(cleanPath, "\\", "/", -1) // Normalize backslashes
+	if cleanPath != "/" && strings.HasPrefix(cleanPath, "/") {
+		cleanPath = cleanPath[1:] // Remove leading slash for proper joining
+	}
+
 	// Construct the file path
-	filePath := filepath.Join(galleryDir, requestPath)
+	filePath := filepath.Join(galleryDir, cleanPath)
+	if !strings.HasPrefix(filePath, galleryDir) {
+		http.Error(w, "Invalid file path", http.StatusBadRequest)
+		return
+	}
+
 	if !strings.HasSuffix(filePath, encryptedExt) {
 		filePath += encryptedExt
 	}
@@ -431,7 +517,9 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 			// Invalidate the user's session
 			session.Values["authenticated"] = false
 			session.Values["password_hash"] = ""
-			session.Save(r, w)
+			if err := session.Save(r, w); err != nil {
+				log.Printf("Error saving session: %v", err)
+			}
 
 			// Redirect to login page with error
 			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
@@ -451,7 +539,9 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 			// Invalidate the user's session
 			session.Values["authenticated"] = false
 			session.Values["password_hash"] = ""
-			session.Save(r, w)
+			if err := session.Save(r, w); err != nil {
+				log.Printf("Error saving session: %v", err)
+			}
 
 			// Redirect to login page with error
 			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
@@ -474,8 +564,12 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/pdf"
 	}
 
+	// Send the file to the client
 	w.Header().Set("Content-Type", contentType)
-	w.Write(decryptedData)
+	if _, err := w.Write(decryptedData); err != nil {
+		log.Printf("Error writing response: %v", err)
+		// Error is already sent to client, nothing more we can do here
+	}
 }
 
 // uploadHandler handles file uploads
@@ -506,7 +600,18 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		currentDir = "/"
 	}
 
-	targetDir := filepath.Join(galleryDir, currentDir)
+	// Sanitize the path to prevent directory traversal
+	cleanDir := filepath.Clean(currentDir)
+	cleanDir = strings.Replace(cleanDir, "\\", "/", -1) // Normalize backslashes
+	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
+		cleanDir = cleanDir[1:] // Remove leading slash for proper joining
+	}
+
+	targetDir := filepath.Join(galleryDir, cleanDir)
+	if !strings.HasPrefix(targetDir, galleryDir) {
+		http.Error(w, "Invalid upload directory", http.StatusBadRequest)
+		return
+	}
 
 	// Check if the target directory exists
 	info, err := os.Stat(targetDir)
@@ -597,11 +702,11 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Construct proper redirect path
 	redirectPath := "/gallery/"
-	if currentDir != "/" {
+	if cleanDir != "/" {
 		// Handle subdirectory path properly
-		// Strip any leading slash from currentDir to avoid double slashes
-		cleanDir := strings.TrimPrefix(currentDir, "/")
-		redirectPath = "/gallery/" + cleanDir
+		// Strip any leading slash from cleanDir to avoid double slashes
+		redirectDir := strings.TrimPrefix(cleanDir, "/")
+		redirectPath = "/gallery/" + redirectDir
 		// Ensure the path ends with a slash for directories
 		if !strings.HasSuffix(redirectPath, "/") {
 			redirectPath += "/"
@@ -645,8 +750,20 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize the directory path to prevent directory traversal
+	cleanDir := filepath.Clean(currentDir)
+	cleanDir = strings.Replace(cleanDir, "\\", "/", -1) // Normalize backslashes
+	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
+		cleanDir = cleanDir[1:] // Remove leading slash for proper joining
+	}
+
 	// Check if the parent directory exists
-	parentDir := filepath.Join(galleryDir, currentDir)
+	parentDir := filepath.Join(galleryDir, cleanDir)
+	if !strings.HasPrefix(parentDir, galleryDir) {
+		http.Error(w, "Invalid directory path", http.StatusBadRequest)
+		return
+	}
+
 	info, err := os.Stat(parentDir)
 	if os.IsNotExist(err) {
 		http.Error(w, "Parent directory does not exist", http.StatusNotFound)
@@ -659,6 +776,9 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sanitize directory name - prevent any path traversal attempts in the name itself
+	dirName = filepath.Base(dirName)
+
 	// Encrypt the directory name
 	encDirName, err := encryptFileName(dirName, passwordHash)
 	if err != nil {
@@ -667,8 +787,8 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create the directory
-	newDirPath := filepath.Join(galleryDir, currentDir, encDirName+encryptedExt)
-	err = os.MkdirAll(newDirPath, 0755)
+	newDirPath := filepath.Join(galleryDir, cleanDir, encDirName+encryptedExt)
+	err = os.MkdirAll(newDirPath, 0750)
 	if err != nil {
 		http.Error(w, "Error creating directory", http.StatusInternalServerError)
 		return
@@ -676,11 +796,11 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Construct proper redirect path
 	redirectPath := "/gallery/"
-	if currentDir != "/" {
+	if cleanDir != "/" {
 		// Handle subdirectory path properly
-		// Strip any leading slash from currentDir to avoid double slashes
-		cleanDir := strings.TrimPrefix(currentDir, "/")
-		redirectPath = "/gallery/" + cleanDir
+		// Strip any leading slash from cleanDir to avoid double slashes
+		redirectDir := strings.TrimPrefix(cleanDir, "/")
+		redirectPath = "/gallery/" + redirectDir
 		// Ensure the path ends with a slash for directories
 		if !strings.HasSuffix(redirectPath, "/") {
 			redirectPath += "/"
@@ -718,8 +838,22 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 		currentDir = "/"
 	}
 
+	// Sanitize the item path to prevent directory traversal
+	cleanItemPath := filepath.Clean(itemPath)
+	cleanItemPath = strings.Replace(cleanItemPath, "\\", "/", -1) // Normalize backslashes
+	if cleanItemPath != "/" && strings.HasPrefix(cleanItemPath, "/") {
+		cleanItemPath = cleanItemPath[1:] // Remove leading slash for proper joining
+	}
+
+	// Sanitize the current directory path
+	cleanDir := filepath.Clean(currentDir)
+	cleanDir = strings.Replace(cleanDir, "\\", "/", -1) // Normalize backslashes
+	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
+		cleanDir = cleanDir[1:] // Remove leading slash for proper joining
+	}
+
 	// Validate and sanitize the path to prevent directory traversal
-	fullPath := filepath.Join(galleryDir, itemPath)
+	fullPath := filepath.Join(galleryDir, cleanItemPath)
 	if !strings.HasPrefix(fullPath, galleryDir) {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
@@ -747,11 +881,11 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Construct proper redirect path
 	redirectPath := "/gallery/"
-	if currentDir != "/" {
+	if cleanDir != "/" {
 		// Handle subdirectory path properly
-		// Strip any leading slash from currentDir to avoid double slashes
-		cleanDir := strings.TrimPrefix(currentDir, "/")
-		redirectPath = "/gallery/" + cleanDir
+		// Strip any leading slash from cleanDir to avoid double slashes
+		redirectDir := strings.TrimPrefix(cleanDir, "/")
+		redirectPath = "/gallery/" + redirectDir
 		// Ensure the path ends with a slash for directories
 		if !strings.HasSuffix(redirectPath, "/") {
 			redirectPath += "/"
@@ -812,8 +946,8 @@ func encryptFileName(filename string, passwordHash string) (string, error) {
 
 	// Create initialization vector
 	iv := make([]byte, aes.BlockSize)
-	for i := range iv {
-		iv[i] = byte(i)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return "", err
 	}
 
 	// Encrypt
@@ -825,11 +959,13 @@ func encryptFileName(filename string, passwordHash string) (string, error) {
 	// Add a small validity check (4 bytes is enough)
 	validationTag := []byte("GOCR")
 	tagEncrypted := make([]byte, len(validationTag))
+	// Use the same IV for consistency (it's included in the output)
 	stream = cipher.NewCFBEncrypter(block, iv)
 	stream.XORKeyStream(tagEncrypted, validationTag)
 
-	// Combine encrypted data with encrypted validation tag
-	combined := append(encrypted, tagEncrypted...)
+	// Combine IV + encrypted data + encrypted validation tag
+	combined := append(iv, encrypted...)
+	combined = append(combined, tagEncrypted...)
 
 	// Convert to hex string
 	return hex.EncodeToString(combined), nil
@@ -843,8 +979,9 @@ func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
 		return "", err
 	}
 
-	// Ensure we have enough data (at least for validation tag)
-	if len(encrypted) < 4 {
+	// Ensure we have enough data (at least IV size + validation tag)
+	minSize := aes.BlockSize + 4
+	if len(encrypted) < minSize {
 		return "", errors.New("encrypted data is too short")
 	}
 
@@ -853,20 +990,15 @@ func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
 		return "", err
 	}
 
-	// Create initialization vector
-	iv := make([]byte, aes.BlockSize)
-	for i := range iv {
-		iv[i] = byte(i)
-	}
-
-	// Split the data - last 4 bytes are the validation tag
-	dataLength := len(encrypted) - 4
-	encryptedData := encrypted[:dataLength]
-	encryptedTag := encrypted[dataLength:]
+	// Extract IV from the first 16 bytes
+	iv := encrypted[:aes.BlockSize]
+	// The rest is the encrypted data + validation tag
+	encryptedData := encrypted[aes.BlockSize : len(encrypted)-4]
+	encryptedTag := encrypted[len(encrypted)-4:]
 
 	// Decrypt
 	stream := cipher.NewCFBDecrypter(block, iv)
-	decrypted := make([]byte, dataLength)
+	decrypted := make([]byte, len(encryptedData))
 	stream.XORKeyStream(decrypted, encryptedData)
 
 	// Decrypt validation tag

@@ -93,9 +93,10 @@ func TestViewHandler(t *testing.T) {
 	// Create test directory and file
 	passwordHash := hashPassword("testpassword")
 	testContent := []byte("test file for viewing")
+	fileName := "testview.txt"
 
 	// Create an encrypted filename
-	encFileName, err := encryptFileName("testview.txt", passwordHash)
+	encFileName, err := encryptFileName(fileName, passwordHash)
 	if err != nil {
 		t.Fatalf("Error encrypting filename: %v", err)
 	}
@@ -192,15 +193,26 @@ func TestCreateDirHandler(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusSeeOther)
 	}
 
-	// Check if directory was created
-	// Get encrypted directory name
-	encDirName, err := encryptFileName(dirName, passwordHash)
+	// Check if directory was created with any encrypted name ending with .enc
+	foundEncryptedDir := false
+	files, err := os.ReadDir(testParentDir)
 	if err != nil {
-		t.Fatalf("Error encrypting directory name: %v", err)
+		t.Fatalf("Error reading test parent directory: %v", err)
 	}
 
-	newDirPath := filepath.Join(testParentDir, encDirName+encryptedExt)
-	if _, err := os.Stat(newDirPath); os.IsNotExist(err) {
-		t.Errorf("Directory not created at expected path: %s", newDirPath)
+	for _, file := range files {
+		if file.IsDir() && strings.HasSuffix(file.Name(), encryptedExt) {
+			// Try to decrypt the name to verify it's the correct directory
+			encName := strings.TrimSuffix(file.Name(), encryptedExt)
+			decryptedName, err := decryptFileName(encName, passwordHash)
+			if err == nil && decryptedName == dirName {
+				foundEncryptedDir = true
+				break
+			}
+		}
+	}
+
+	if !foundEncryptedDir {
+		t.Errorf("Directory with encrypted name for '%s' not found in %s", dirName, testParentDir)
 	}
 }

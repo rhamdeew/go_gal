@@ -39,6 +39,14 @@ while [[ $# -gt 0 ]]; do
       KEY_FILE="${1#*=}"
       shift
       ;;
+    --session-key=*)
+      SESSION_KEY="${1#*=}"
+      shift
+      ;;
+    --salt=*)
+      SALT="${1#*=}"
+      shift
+      ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo "Options:"
@@ -48,6 +56,8 @@ while [[ $# -gt 0 ]]; do
       echo "  --enable-ssl       Enable SSL/TLS"
       echo "  --cert=FILE        Path to SSL certificate (default: cert.pem)"
       echo "  --key=FILE         Path to SSL key (default: key.pem)"
+      echo "  --session-key=KEY  Custom session encryption key"
+      echo "  --salt=SALT        Custom password hashing salt"
       echo "  --help             Show this help message"
       exit 0
       ;;
@@ -117,6 +127,17 @@ cp -r static "$INSTALL_DIR/" 2>/dev/null || echo "Warning: static directory not 
 # Create gallery directory
 mkdir -p "$INSTALL_DIR/gallery"
 
+# Generate random keys if not provided
+if [ -z "$SESSION_KEY" ]; then
+  SESSION_KEY=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 32)
+  echo "Generated random session key"
+fi
+
+if [ -z "$SALT" ]; then
+  SALT=$(head /dev/urandom | tr -dc A-Za-z0-9 | head -c 16)
+  echo "Generated random salt"
+fi
+
 # Configure SSL options if enabled
 SSL_OPTS=""
 if [ "$ENABLE_SSL" = true ]; then
@@ -142,6 +163,27 @@ sed -i "s|ExecStart=.*|ExecStart=$INSTALL_DIR/$BINARY_NAME --port=\${PORT} --hos
 sed -i "s|Environment=\"PORT=.*\"|Environment=\"PORT=$PORT\"|" "/etc/systemd/system/$SERVICE_FILE"
 sed -i "s|Environment=\"HOST=.*\"|Environment=\"HOST=$HOST\"|" "/etc/systemd/system/$SERVICE_FILE"
 sed -i "s|Environment=\"SSL_OPTS=.*\"|Environment=\"SSL_OPTS=$SSL_OPTS\"|" "/etc/systemd/system/$SERVICE_FILE"
+
+# Add environment variables for security
+if grep -q "^Environment=\"GO_GAL_SESSION_KEY=" "/etc/systemd/system/$SERVICE_FILE"; then
+  sed -i "s|^Environment=\"GO_GAL_SESSION_KEY=.*\"|Environment=\"GO_GAL_SESSION_KEY=$SESSION_KEY\"|" "/etc/systemd/system/$SERVICE_FILE"
+else
+  sed -i "/^Environment=\"SSL_OPTS=/ a Environment=\"GO_GAL_SESSION_KEY=$SESSION_KEY\"" "/etc/systemd/system/$SERVICE_FILE"
+fi
+
+if grep -q "^Environment=\"GO_GAL_SALT=" "/etc/systemd/system/$SERVICE_FILE"; then
+  sed -i "s|^Environment=\"GO_GAL_SALT=.*\"|Environment=\"GO_GAL_SALT=$SALT\"|" "/etc/systemd/system/$SERVICE_FILE"
+else
+  sed -i "/^Environment=\"GO_GAL_SESSION_KEY=/ a Environment=\"GO_GAL_SALT=$SALT\"" "/etc/systemd/system/$SERVICE_FILE"
+fi
+
+if [ "$ENABLE_SSL" = true ]; then
+  if grep -q "^Environment=\"GO_GAL_SSL_ENABLED=" "/etc/systemd/system/$SERVICE_FILE"; then
+    sed -i "s|^Environment=\"GO_GAL_SSL_ENABLED=.*\"|Environment=\"GO_GAL_SSL_ENABLED=true\"|" "/etc/systemd/system/$SERVICE_FILE"
+  else
+    sed -i "/^Environment=\"GO_GAL_SALT=/ a Environment=\"GO_GAL_SSL_ENABLED=true\"" "/etc/systemd/system/$SERVICE_FILE"
+  fi
+fi
 
 # Add or update Group directive in service file
 if grep -q "^Group=" "/etc/systemd/system/$SERVICE_FILE"; then
