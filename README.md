@@ -143,28 +143,22 @@ The application can be installed as a systemd service for automatic startup and 
 ### Prerequisites
 
 - A Linux system with systemd
-- Go installed to build the application
 - Root access for service installation
 
 ### Installation
 
-1. Build the application:
-   ```
-   make build
-   ```
+1. Download the appropriate binary for your platform from the [Releases page](https://github.com/rhamdeew/go_gal/releases).
 
-2. Run the installation script:
+2. Run the installation script included in the release:
    ```
    sudo ./install.sh
    ```
 
-3. Start the service:
+   The script will automatically detect and use any binary matching the pattern `go_gal*` in the current directory.
+
+3. Start and enable the service:
    ```
    sudo systemctl start go_gal
-   ```
-
-4. Enable automatic startup at boot:
-   ```
    sudo systemctl enable go_gal
    ```
 
@@ -211,7 +205,7 @@ To uninstall the service:
 sudo ./uninstall.sh
 ```
 
-This will stop and disable the service, remove the service file, and optionally remove the installation directory.
+This will stop and disable the service, remove the service file, and remove the installation directory.
 
 ### Manual Configuration
 

@@ -36,12 +36,12 @@ fi
 echo "Uninstalling Go Crypto Gallery from $INSTALL_DIR..."
 
 # Stop and disable the service if it exists
-if systemctl is-active --quiet "$SERVICE_NAME"; then
+if systemctl is-active --quiet "$SERVICE_NAME" 2>/dev/null; then
   echo "Stopping $SERVICE_NAME service..."
   systemctl stop "$SERVICE_NAME"
 fi
 
-if systemctl is-enabled --quiet "$SERVICE_NAME"; then
+if systemctl is-enabled --quiet "$SERVICE_NAME" 2>/dev/null; then
   echo "Disabling $SERVICE_NAME service..."
   systemctl disable "$SERVICE_NAME"
 fi

@@ -8,6 +8,7 @@ INSTALL_DIR="/opt/go_gal"
 SERVICE_NAME="go_gal"
 SERVICE_FILE="$SERVICE_NAME.service"
 BINARY_NAME="go_gal"
+BINARY_PATTERN="go_gal*"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -72,14 +73,28 @@ echo "Installing Go Crypto Gallery to $INSTALL_DIR..."
 # Create installation directory
 mkdir -p "$INSTALL_DIR"
 
-# Copy necessary files
-if [ -e "$BINARY_NAME" ]; then
-  cp "$BINARY_NAME" "$INSTALL_DIR/"
-  chmod +x "$INSTALL_DIR/$BINARY_NAME"
-else
-  echo "Error: $BINARY_NAME not found. Please build the application first."
-  exit 1
+# Find appropriate binary (handles naming like go_gal_linux_amd64)
+FOUND_BINARY=""
+for f in $BINARY_PATTERN; do
+  if [ -e "$f" ] && [ -x "$f" ]; then
+    FOUND_BINARY="$f"
+    break
+  fi
+done
+
+if [ -z "$FOUND_BINARY" ]; then
+  # Check for exact binary name as fallback
+  if [ -e "$BINARY_NAME" ]; then
+    FOUND_BINARY="$BINARY_NAME"
+  else
+    echo "Error: No binary matching $BINARY_PATTERN or $BINARY_NAME found. Please build the application first."
+    exit 1
+  fi
 fi
+
+echo "Using binary: $FOUND_BINARY"
+cp "$FOUND_BINARY" "$INSTALL_DIR/$BINARY_NAME"
+chmod +x "$INSTALL_DIR/$BINARY_NAME"
 
 # Copy templates, static directory, and other required files
 cp -r templates "$INSTALL_DIR/" 2>/dev/null || echo "Warning: templates directory not found"
@@ -111,8 +126,8 @@ sed -i "s|Environment=\"PORT=.*\"|Environment=\"PORT=$PORT\"|" "/etc/systemd/sys
 sed -i "s|Environment=\"HOST=.*\"|Environment=\"HOST=$HOST\"|" "/etc/systemd/system/$SERVICE_FILE"
 sed -i "s|Environment=\"SSL_OPTS=.*\"|Environment=\"SSL_OPTS=$SSL_OPTS\"|" "/etc/systemd/system/$SERVICE_FILE"
 
-# Set proper permissions
-chown -R nobody:nobody "$INSTALL_DIR"
+# Set proper permissions - use a system user that always exists
+chown -R root:root "$INSTALL_DIR"
 chmod -R 755 "$INSTALL_DIR"
 
 # Reload systemd configuration
