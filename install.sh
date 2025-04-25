@@ -9,6 +9,7 @@ SERVICE_NAME="go_gal"
 SERVICE_FILE="$SERVICE_NAME.service"
 BINARY_NAME="go_gal"
 BINARY_PATTERN="go_gal*"
+SYS_USER="gogal"
 SYS_GROUP="gogal"
 
 # Parse command line arguments
@@ -75,6 +76,12 @@ echo "Installing Go Crypto Gallery to $INSTALL_DIR..."
 if ! getent group "$SYS_GROUP" > /dev/null; then
   echo "Creating system group $SYS_GROUP..."
   groupadd --system "$SYS_GROUP"
+fi
+
+# Create system user if it doesn't exist
+if ! getent passwd "$SYS_USER" > /dev/null; then
+  echo "Creating system user $SYS_USER..."
+  useradd --system --gid "$SYS_GROUP" --no-create-home --shell /usr/sbin/nologin "$SYS_USER"
 fi
 
 # Create installation directory
@@ -144,8 +151,16 @@ else
   sed -i "/^User=/ a Group=$SYS_GROUP" "/etc/systemd/system/$SERVICE_FILE"
 fi
 
-# Set proper permissions using the system group
-chown -R root:$SYS_GROUP "$INSTALL_DIR"
+# Add or update User directive in service file
+if grep -q "^User=" "/etc/systemd/system/$SERVICE_FILE"; then
+  sed -i "s|^User=.*|User=$SYS_USER|" "/etc/systemd/system/$SERVICE_FILE"
+else
+  # Find the Group= line and add User= before it
+  sed -i "/^Group=/ i User=$SYS_USER" "/etc/systemd/system/$SERVICE_FILE"
+fi
+
+# Set proper permissions using the system user and group
+chown -R $SYS_USER:$SYS_GROUP "$INSTALL_DIR"
 chmod -R 750 "$INSTALL_DIR"
 # Ensure write permissions for data directory
 chmod 770 "$INSTALL_DIR/gallery"

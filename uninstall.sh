@@ -5,8 +5,10 @@ set -e
 
 SERVICE_NAME="go_gal"
 INSTALL_DIR="/opt/go_gal"
+SYS_USER="gogal"
 SYS_GROUP="gogal"
 REMOVE_GROUP=false
+REMOVE_USER=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -19,11 +21,22 @@ while [[ $# -gt 0 ]]; do
       REMOVE_GROUP=true
       shift
       ;;
+    --remove-user)
+      REMOVE_USER=true
+      shift
+      ;;
+    --remove-all)
+      REMOVE_GROUP=true
+      REMOVE_USER=true
+      shift
+      ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo "Options:"
       echo "  --dir=DIR      Installation directory to remove (default: /opt/go_gal)"
       echo "  --remove-group Remove the gogal system group"
+      echo "  --remove-user  Remove the gogal system user"
+      echo "  --remove-all   Remove both the user and group"
       echo "  --help         Show this help message"
       exit 0
       ;;
@@ -69,6 +82,19 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
   echo "Installation directory removed."
 else
   echo "Installation directory has been kept."
+fi
+
+# Remove system user if requested
+if [ "$REMOVE_USER" = true ]; then
+  if getent passwd "$SYS_USER" > /dev/null; then
+    echo "Removing $SYS_USER system user..."
+    userdel "$SYS_USER"
+    echo "System user removed."
+  else
+    echo "System user $SYS_USER does not exist."
+  fi
+else
+  echo "System user $SYS_USER has been kept. Use --remove-user to remove it."
 fi
 
 # Remove system group if requested
