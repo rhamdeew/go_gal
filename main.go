@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -11,6 +12,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"fmt"
 	"html/template"
@@ -78,6 +80,7 @@ func main() {
 	r.HandleFunc("/gallery/{path:.*}", galleryHandler)
 	r.HandleFunc("/upload", uploadHandler).Methods("POST")
 	r.HandleFunc("/createdir", createDirHandler).Methods("POST")
+	r.HandleFunc("/delete", deleteHandler).Methods("POST")
 	r.HandleFunc("/view/{path:.*}", viewHandler)
 	r.HandleFunc("/logout", logoutHandler)
 
@@ -199,7 +202,14 @@ func indexHandler(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/gallery/", http.StatusSeeOther)
 		return
 	}
-	templates.ExecuteTemplate(w, "login.html", nil)
+
+	// Check for error parameters
+	errorMsg := ""
+	if errParam := r.URL.Query().Get("error"); errParam == "incorrect_password" {
+		errorMsg = "Incorrect password. Please try again."
+	}
+
+	templates.ExecuteTemplate(w, "login.html", PageData{Error: errorMsg})
 }
 
 // loginHandler processes the login form
@@ -263,6 +273,8 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var items []GalleryItem
+	var wrongPasswordDetected bool
+
 	for _, file := range files {
 		name := file.Name()
 
@@ -272,6 +284,10 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 			decryptedName, err := decryptFileName(encName, passwordHash)
 
 			if err != nil {
+				// If we have a password verification error, note that
+				if strings.Contains(err.Error(), "incorrect password") {
+					wrongPasswordDetected = true
+				}
 				log.Printf("Error decrypting filename %s: %v", name, err)
 				continue
 			}
@@ -289,6 +305,18 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 				EncPath: name,
 			})
 		}
+	}
+
+	// If we detected wrong password and couldn't decrypt any files
+	if wrongPasswordDetected && len(items) == 0 {
+		// Invalidate the user's session
+		session.Values["authenticated"] = false
+		session.Values["password_hash"] = ""
+		session.Save(r, w)
+
+		// Redirect to login page with error
+		http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+		return
 	}
 
 	templates.ExecuteTemplate(w, "gallery.html", PageData{
@@ -333,6 +361,18 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	// Decrypt and serve the file
 	decryptedData, err := decryptFile(filePath, passwordHash)
 	if err != nil {
+		// Check if this is a password error
+		if strings.Contains(err.Error(), "incorrect password") {
+			// Invalidate the user's session
+			session.Values["authenticated"] = false
+			session.Values["password_hash"] = ""
+			session.Save(r, w)
+
+			// Redirect to login page with error
+			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+			return
+		}
+
 		http.Error(w, "Error decrypting file: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -341,6 +381,18 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	originalName := strings.TrimSuffix(filepath.Base(requestPath), encryptedExt)
 	decryptedName, err := decryptFileName(originalName, passwordHash)
 	if err != nil {
+		// Check if this is a password error
+		if strings.Contains(err.Error(), "incorrect password") {
+			// Invalidate the user's session
+			session.Values["authenticated"] = false
+			session.Values["password_hash"] = ""
+			session.Save(r, w)
+
+			// Redirect to login page with error
+			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+			return
+		}
+
 		http.Error(w, "Error decrypting filename", http.StatusInternalServerError)
 		return
 	}
@@ -557,6 +609,70 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
 }
 
+// deleteHandler removes a file or directory
+func deleteHandler(w http.ResponseWriter, r *http.Request) {
+	session, _ := store.Get(r, "gallery-session")
+	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// Get the path to delete
+	itemPath := r.FormValue("path")
+	if itemPath == "" {
+		http.Error(w, "Path is required", http.StatusBadRequest)
+		return
+	}
+
+	// Get the current directory (for redirection after deletion)
+	currentDir := r.FormValue("currentDir")
+	if currentDir == "" {
+		currentDir = "/"
+	}
+
+	// Validate and sanitize the path to prevent directory traversal
+	fullPath := filepath.Join(galleryDir, itemPath)
+	if !strings.HasPrefix(fullPath, galleryDir) {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Check if the item exists
+	info, err := os.Stat(fullPath)
+	if os.IsNotExist(err) {
+		http.Error(w, "Item does not exist", http.StatusNotFound)
+		return
+	}
+
+	// Remove the item (recursively if it's a directory)
+	var removeErr error
+	if info.IsDir() {
+		removeErr = os.RemoveAll(fullPath)
+	} else {
+		removeErr = os.Remove(fullPath)
+	}
+
+	if removeErr != nil {
+		http.Error(w, "Error removing item: "+removeErr.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Construct proper redirect path
+	redirectPath := "/gallery/"
+	if currentDir != "/" {
+		// Handle subdirectory path properly
+		// Strip any leading slash from currentDir to avoid double slashes
+		cleanDir := strings.TrimPrefix(currentDir, "/")
+		redirectPath = "/gallery/" + cleanDir
+		// Ensure the path ends with a slash for directories
+		if !strings.HasSuffix(redirectPath, "/") {
+			redirectPath += "/"
+		}
+	}
+
+	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
+}
+
 // logoutHandler logs the user out
 func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	session, _ := store.Get(r, "gallery-session")
@@ -607,8 +723,18 @@ func encryptFileName(filename string, passwordHash string) (string, error) {
 	encrypted := make([]byte, len(data))
 	stream.XORKeyStream(encrypted, data)
 
+	// Add a validation tag to verify correct password later
+	// Add a small validity check (4 bytes is enough)
+	validationTag := []byte("GOCR")
+	tagEncrypted := make([]byte, len(validationTag))
+	stream = cipher.NewCFBEncrypter(block, iv)
+	stream.XORKeyStream(tagEncrypted, validationTag)
+
+	// Combine encrypted data with encrypted validation tag
+	combined := append(encrypted, tagEncrypted...)
+
 	// Convert to hex string
-	return hex.EncodeToString(encrypted), nil
+	return hex.EncodeToString(combined), nil
 }
 
 // decryptFileName decrypts a filename
@@ -617,6 +743,11 @@ func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
 	encrypted, err := hex.DecodeString(encryptedHex)
 	if err != nil {
 		return "", err
+	}
+
+	// Ensure we have enough data (at least for validation tag)
+	if len(encrypted) < 4 {
+		return "", errors.New("encrypted data is too short")
 	}
 
 	block, err := createAESCipher(passwordHash)
@@ -630,10 +761,25 @@ func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
 		iv[i] = byte(i)
 	}
 
+	// Split the data - last 4 bytes are the validation tag
+	dataLength := len(encrypted) - 4
+	encryptedData := encrypted[:dataLength]
+	encryptedTag := encrypted[dataLength:]
+
 	// Decrypt
 	stream := cipher.NewCFBDecrypter(block, iv)
-	decrypted := make([]byte, len(encrypted))
-	stream.XORKeyStream(decrypted, encrypted)
+	decrypted := make([]byte, dataLength)
+	stream.XORKeyStream(decrypted, encryptedData)
+
+	// Decrypt validation tag
+	stream = cipher.NewCFBDecrypter(block, iv)
+	decryptedTag := make([]byte, 4)
+	stream.XORKeyStream(decryptedTag, encryptedTag)
+
+	// Verify the validation tag
+	if string(decryptedTag) != "GOCR" {
+		return "", errors.New("decryption failed: incorrect password")
+	}
 
 	return string(decrypted), nil
 }
@@ -663,10 +809,29 @@ func encryptAndSaveFile(data []byte, path string, passwordHash string) error {
 		return err
 	}
 
-	// Encrypt and write the data
+	// Encrypt the data
 	stream := cipher.NewCFBEncrypter(block, iv)
-	writer := &cipher.StreamWriter{S: stream, W: f}
-	if _, err := writer.Write(data); err != nil {
+	encrypted := make([]byte, len(data))
+	stream.XORKeyStream(encrypted, data)
+
+	// Create HMAC for authenticated encryption
+	h := hmac.New(sha256.New, []byte(passwordHash))
+	h.Write(encrypted) // Add the encrypted data to HMAC
+	mac := h.Sum(nil)
+
+	// Write the HMAC size and value
+	macSize := make([]byte, 8)
+	// Store the MAC size (which is fixed anyway, but for completeness)
+	macSize[0] = byte(len(mac))
+	if _, err := f.Write(macSize); err != nil {
+		return err
+	}
+	if _, err := f.Write(mac); err != nil {
+		return err
+	}
+
+	// Write the encrypted data
+	if _, err := f.Write(encrypted); err != nil {
 		return err
 	}
 
@@ -685,34 +850,57 @@ func decryptFile(path string, passwordHash string) ([]byte, error) {
 	// Read the IV
 	iv := make([]byte, aes.BlockSize)
 	if _, err := io.ReadFull(f, iv); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("file is corrupted or too small: %v", err)
 	}
 
+	// Read the HMAC size
+	macSizeBuf := make([]byte, 8)
+	if _, err := io.ReadFull(f, macSizeBuf); err != nil {
+		return nil, fmt.Errorf("file is corrupted (missing HMAC size): %v", err)
+	}
+	macSize := int(macSizeBuf[0])
+	if macSize <= 0 || macSize > 64 { // Sanity check
+		return nil, fmt.Errorf("file has invalid MAC size: %d", macSize)
+	}
+
+	// Read the HMAC
+	mac := make([]byte, macSize)
+	if _, err := io.ReadFull(f, mac); err != nil {
+		return nil, fmt.Errorf("file is corrupted (missing HMAC): %v", err)
+	}
+
+	// Read the rest of the file (encrypted data)
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	encryptedSize := fileInfo.Size() - int64(aes.BlockSize) - 8 - int64(macSize)
+	if encryptedSize <= 0 {
+		return nil, errors.New("file is corrupted (no encrypted data)")
+	}
+
+	encryptedData := make([]byte, encryptedSize)
+	if _, err := io.ReadFull(f, encryptedData); err != nil {
+		return nil, fmt.Errorf("file is corrupted (missing encrypted data): %v", err)
+	}
+
+	// Verify HMAC to detect wrong password
+	h := hmac.New(sha256.New, []byte(passwordHash))
+	h.Write(encryptedData)
+	expectedMAC := h.Sum(nil)
+	if !hmac.Equal(mac, expectedMAC) {
+		return nil, errors.New("decryption failed: incorrect password or tampered file")
+	}
+
+	// Decrypt the data
 	block, err := createAESCipher(passwordHash)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create a buffer to hold the decrypted data
-	buf := make([]byte, 1024)
-	var result []byte
-
-	// Decrypt the file
 	stream := cipher.NewCFBDecrypter(block, iv)
-	reader := &cipher.StreamReader{S: stream, R: f}
+	decrypted := make([]byte, len(encryptedData))
+	stream.XORKeyStream(decrypted, encryptedData)
 
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			result = append(result, buf[:n]...)
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	return result, nil
+	return decrypted, nil
 }

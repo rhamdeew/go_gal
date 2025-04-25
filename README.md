@@ -19,6 +19,8 @@ A password-protected web gallery application written in Go. All folders and file
 
 - Folder and file names are encrypted using AES-256
 - File contents are encrypted with AES-256
+- File integrity verification with HMAC-SHA256 to detect tampering
+- Validation tags for filename encryption to verify password correctness
 - No passwords are stored on the server, only used for encryption/decryption
 - Session-based authentication with secure cookies
 - Optional HTTPS with TLS 1.2+ for secure connections
@@ -100,7 +102,33 @@ A password-protected web gallery application written in Go. All folders and file
 - **Remember your password!** If you forget it, there is no way to recover your encrypted files since the password is not stored anywhere.
 - When creating a new gallery, the first password you enter will be the one used for encryption.
 - For security purposes, encryption/decryption happens on the server side, but the password is not stored permanently.
+- The application uses HMAC validation to detect file tampering, providing an additional layer of security.
 - When using self-signed certificates, your browser may show a security warning. You can safely proceed for personal use.
+
+## GitHub Actions and Releases
+
+This project uses GitHub Actions to automatically build and release binaries for multiple platforms when you create a new tag. The workflow will:
+
+1. Build binaries for the following platforms:
+   - Linux (amd64, arm64)
+   - Windows (amd64)
+   - macOS (amd64, arm64)
+
+2. Run tests to ensure everything works
+
+3. Create a release with all binaries bundled (including templates and static files)
+
+To create a new release:
+
+```bash
+# Tag a new version
+git tag v1.0.0
+
+# Push the tag to GitHub
+git push origin v1.0.0
+```
+
+The GitHub Actions workflow will automatically trigger, build the binaries, and create a release with all the necessary files.
 
 ## License
 
