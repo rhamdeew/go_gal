@@ -68,7 +68,7 @@ func init() {
 
 	store.Options = &sessions.Options{
 		Path:     "/",
-		MaxAge:   86400 * 7, // 7 days
+		MaxAge:   15 * 60, // 15 minutes
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	}
