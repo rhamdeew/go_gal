@@ -1,5 +1,11 @@
 # Go Gallery
 
+![CI/CD Status](https://github.com/rhamdeew/go_gal/actions/workflows/release.yml/badge.svg)
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/rhamdeew/go_gal)](https://github.com/rhamdeew/go_gal/releases/latest)
+[![GitHub license](https://img.shields.io/github/license/rhamdeew/go_gal)](https://github.com/rhamdeew/go_gal/blob/main/LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/rhamdeew/go_gal)](https://goreportcard.com/report/github.com/rhamdeew/go_gal)
+[![GitHub stars](https://img.shields.io/github/stars/rhamdeew/go_gal)](https://github.com/rhamdeew/go_gal/stargazers)
+
 A password-protected web gallery application written in Go. All folders and files are encrypted, and only users with the correct password can access and view the content.
 
 ## Features
@@ -24,6 +30,24 @@ A password-protected web gallery application written in Go. All folders and file
 - No passwords are stored on the server, only used for encryption/decryption
 - Session-based authentication with secure cookies
 - Optional HTTPS with TLS 1.2+ for secure connections
+- Protection against directory traversal attacks
+- Environment variable configuration for sensitive values
+
+## Environment Variables
+
+The application can be configured using the following environment variables:
+
+- `GO_GAL_SESSION_KEY`: Custom session key for cookie encryption (default: a hardcoded value)
+- `GO_GAL_SALT`: Custom salt for password hashing (default: a hardcoded value)
+- `GO_GAL_SSL_ENABLED`: Set to "true" to enable HTTPS features (automatically set when using --ssl flag)
+
+For production use, it's highly recommended to set custom values for these variables:
+
+```bash
+export GO_GAL_SESSION_KEY="your-random-secure-key"
+export GO_GAL_SALT="your-random-secure-salt"
+./go_gal --ssl=true
+```
 
 ## Requirements
 
@@ -104,6 +128,11 @@ A password-protected web gallery application written in Go. All folders and file
 - For security purposes, encryption/decryption happens on the server side, but the password is not stored permanently.
 - The application uses HMAC validation to detect file tampering, providing an additional layer of security.
 - When using self-signed certificates, your browser may show a security warning. You can safely proceed for personal use.
+- **Security Best Practices:**
+  - For production or internet-facing deployments, always use HTTPS (--ssl=true)
+  - Set custom values for `GO_GAL_SESSION_KEY` and `GO_GAL_SALT` environment variables
+  - Consider running behind a reverse proxy for additional security
+  - Use strong, unique passwords for your gallery
 
 ## GitHub Actions and Releases
 
@@ -174,10 +203,12 @@ You can pass the following options to the installation script:
 | `--enable-ssl` | Enable SSL/TLS | Disabled |
 | `--cert=FILE` | SSL certificate file | `cert.pem` |
 | `--key=FILE` | SSL key file | `key.pem` |
+| `--session-key=KEY` | Custom session encryption key | Random generated |
+| `--salt=SALT` | Custom password hashing salt | Random generated |
 
 Example:
 ```
-sudo ./install.sh --port=9000 --enable-ssl
+sudo ./install.sh --port=9000 --enable-ssl --session-key="my-secure-key"
 ```
 
 ### Managing the Service
