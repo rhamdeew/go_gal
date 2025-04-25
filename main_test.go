@@ -14,6 +14,20 @@ import (
 	"github.com/gorilla/mux"
 )
 
+// TestMain sets up the test environment
+func TestMain(m *testing.M) {
+	// Create a temporary gallery directory for tests
+	setup()
+
+	// Run tests
+	exitCode := m.Run()
+
+	// Clean up
+	teardown()
+
+	os.Exit(exitCode)
+}
+
 func setup() {
 	// Create a temporary test gallery directory
 	galleryDir = "test_gallery"
@@ -25,13 +39,6 @@ func setup() {
 func teardown() {
 	// Remove test gallery directory
 	os.RemoveAll(galleryDir)
-}
-
-func TestMain(m *testing.M) {
-	setup()
-	code := m.Run()
-	teardown()
-	os.Exit(code)
 }
 
 func TestHashPassword(t *testing.T) {

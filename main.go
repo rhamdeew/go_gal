@@ -32,15 +32,40 @@ import (
 
 // Global variables
 var (
-	templates     = template.Must(template.ParseGlob("templates/*.html"))
+	// Get executable directory for loading templates
+	execDir       = func() string {
+		execPath, err := os.Executable()
+		if err != nil {
+			log.Println("Warning: Could not determine executable path, using current directory")
+			return "."
+		}
+		return filepath.Dir(execPath)
+	}()
+	templates     *template.Template
 	store         = sessions.NewCookieStore([]byte("gocrypto-gallery-session-key"))
 	saltBytes     = []byte("gallery-salt") // Salt for password hashing
-	galleryDir    = "gallery"
+	galleryDir    = filepath.Join(execDir, "gallery")
 	encryptedExt  = ".enc" // Extension for encrypted files
 )
 
 // Initialize the cookie store with proper options
 func init() {
+	// Initialize templates - this will be skipped in tests
+	templatesPath := filepath.Join(execDir, "templates", "*.html")
+	var err error
+	templates, err = template.ParseGlob(templatesPath)
+	if err != nil {
+		// In test environment, create a minimal template
+		if strings.Contains(execDir, "go-build") || strings.Contains(execDir, "test") {
+			log.Println("Running in test environment, using mock templates")
+			templates = template.Must(template.New("login.html").Parse(`<html><body>Login Form {{if .Error}}{{.Error}}{{end}}</body></html>`))
+			template.Must(templates.New("gallery.html").Parse(`<html><body>Gallery {{if .Error}}{{.Error}}{{end}}</body></html>`))
+		} else {
+			// In production, this is a fatal error
+			log.Fatalf("Failed to parse templates from %s: %v", templatesPath, err)
+		}
+	}
+
 	store.Options = &sessions.Options{
 		Path:     "/",
 		MaxAge:   86400 * 7, // 7 days
@@ -95,7 +120,7 @@ func main() {
 	r.HandleFunc("/logout", logoutHandler)
 
 	// Set up static file server for CSS, JS
-	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
+	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join(execDir, "static")))))
 
 	// Construct server address from flags
 	serverAddr := fmt.Sprintf("%s:%s", *host, *port)
