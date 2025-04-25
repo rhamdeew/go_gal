@@ -106,7 +106,10 @@ mkdir -p "$INSTALL_DIR/gallery"
 # Configure SSL options if enabled
 SSL_OPTS=""
 if [ "$ENABLE_SSL" = true ]; then
-  SSL_OPTS="--ssl --cert=$CERT_FILE --key=$KEY_FILE"
+  # Use absolute paths for cert and key files
+  INSTALL_CERT="$INSTALL_DIR/$(basename "$CERT_FILE")"
+  INSTALL_KEY="$INSTALL_DIR/$(basename "$KEY_FILE")"
+  SSL_OPTS="--ssl --cert=$INSTALL_CERT --key=$INSTALL_KEY"
   # Copy certificate files if they exist
   if [ -f "$CERT_FILE" ]; then
     cp "$CERT_FILE" "$INSTALL_DIR/"
