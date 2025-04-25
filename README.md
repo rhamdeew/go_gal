@@ -133,3 +133,97 @@ The GitHub Actions workflow will automatically trigger, build the binaries, and 
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+# Go Crypto Gallery - Systemd Service
+
+## Installation as a systemd service
+
+The application can be installed as a systemd service for automatic startup and management.
+
+### Prerequisites
+
+- A Linux system with systemd
+- Go installed to build the application
+- Root access for service installation
+
+### Installation
+
+1. Build the application:
+   ```
+   make build
+   ```
+
+2. Run the installation script:
+   ```
+   sudo ./install.sh
+   ```
+
+3. Start the service:
+   ```
+   sudo systemctl start go_gal
+   ```
+
+4. Enable automatic startup at boot:
+   ```
+   sudo systemctl enable go_gal
+   ```
+
+### Configuration Options
+
+You can pass the following options to the installation script:
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `--dir=DIR` | Installation directory | `/opt/go_gal` |
+| `--port=PORT` | Port to listen on | `8080` |
+| `--host=HOST` | Host IP to bind to | `0.0.0.0` |
+| `--enable-ssl` | Enable SSL/TLS | Disabled |
+| `--cert=FILE` | SSL certificate file | `cert.pem` |
+| `--key=FILE` | SSL key file | `key.pem` |
+
+Example:
+```
+sudo ./install.sh --port=9000 --enable-ssl
+```
+
+### Managing the Service
+
+- Check status:
+  ```
+  sudo systemctl status go_gal
+  ```
+
+- Stop the service:
+  ```
+  sudo systemctl stop go_gal
+  ```
+
+- View logs:
+  ```
+  sudo journalctl -u go_gal
+  ```
+
+### Uninstallation
+
+To uninstall the service:
+
+```
+sudo ./uninstall.sh
+```
+
+This will stop and disable the service, remove the service file, and optionally remove the installation directory.
+
+### Manual Configuration
+
+If you need to manually configure the service after installation, edit the systemd service file:
+
+```
+sudo nano /etc/systemd/system/go_gal.service
+```
+
+After making changes, reload the systemd configuration:
+
+```
+sudo systemctl daemon-reload
+sudo systemctl restart go_gal
+```
