@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - GitHub CI/CD workflow issues
 - Build process for multi-platform releases
+- Login issue on remote server
 
 ## [0.0.6] - 2025-05-02
 

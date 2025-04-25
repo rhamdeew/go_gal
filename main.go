@@ -39,6 +39,16 @@ var (
 	encryptedExt  = ".enc" // Extension for encrypted files
 )
 
+// Initialize the cookie store with proper options
+func init() {
+	store.Options = &sessions.Options{
+		Path:     "/",
+		MaxAge:   86400 * 7, // 7 days
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
 // GalleryItem represents a file or folder in the gallery
 type GalleryItem struct {
 	Name     string
@@ -197,8 +207,11 @@ func generateSelfSignedCert(certPath, keyPath string) error {
 
 // indexHandler shows the login page or redirects to gallery if already logged in
 func indexHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
-	if auth, ok := session.Values["authenticated"].(bool); ok && auth {
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Session error in indexHandler: %v", err)
+		// Continue to login page if there's a session error
+	} else if auth, ok := session.Values["authenticated"].(bool); ok && auth {
 		http.Redirect(w, r, "/gallery/", http.StatusSeeOther)
 		return
 	}
@@ -222,24 +235,43 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Store password hash in session for later decryption
 	// We don't store the actual password
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session: %v", err)
+		templates.ExecuteTemplate(w, "login.html", PageData{Error: "Session error, please try again"})
+		return
+	}
+
 	session.Values["password_hash"] = hashPassword(password)
 	session.Values["authenticated"] = true
-	session.Save(r, w)
+
+	if err := session.Save(r, w); err != nil {
+		log.Printf("Failed to save session: %v", err)
+		templates.ExecuteTemplate(w, "login.html", PageData{Error: "Failed to save session"})
+		return
+	}
 
 	http.Redirect(w, r, "/gallery/", http.StatusSeeOther)
 }
 
 // galleryHandler shows the contents of the gallery or a specific directory
 func galleryHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in galleryHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed: ok=%v, auth=%v", ok, auth)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
 	passwordHash, ok := session.Values["password_hash"].(string)
 	if !ok {
+		log.Printf("Failed to retrieve password hash from session")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -327,14 +359,22 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 
 // viewHandler decrypts and serves a file for viewing
 func viewHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in viewHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in viewHandler: ok=%v, auth=%v", ok, auth)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
 	passwordHash, ok := session.Values["password_hash"].(string)
 	if !ok {
+		log.Printf("Failed to retrieve password hash from session in viewHandler")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -415,14 +455,22 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 
 // uploadHandler handles file uploads
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in uploadHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in uploadHandler: ok=%v, auth=%v", ok, auth)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
 	passwordHash, ok := session.Values["password_hash"].(string)
 	if !ok {
+		log.Printf("Failed to retrieve password hash from session in uploadHandler")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -540,14 +588,22 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 
 // createDirHandler creates a new directory
 func createDirHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in createDirHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in createDirHandler: ok=%v, auth=%v", ok, auth)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
 
 	passwordHash, ok := session.Values["password_hash"].(string)
 	if !ok {
+		log.Printf("Failed to retrieve password hash from session in createDirHandler")
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -611,8 +667,15 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 
 // deleteHandler removes a file or directory
 func deleteHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in deleteHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in deleteHandler: ok=%v, auth=%v", ok, auth)
 		http.Redirect(w, r, "/", http.StatusSeeOther)
 		return
 	}
@@ -675,10 +738,20 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 
 // logoutHandler logs the user out
 func logoutHandler(w http.ResponseWriter, r *http.Request) {
-	session, _ := store.Get(r, "gallery-session")
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in logoutHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
 	session.Values["authenticated"] = false
 	session.Values["password_hash"] = ""
-	session.Save(r, w)
+
+	if err := session.Save(r, w); err != nil {
+		log.Printf("Failed to save session in logoutHandler: %v", err)
+	}
+
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
