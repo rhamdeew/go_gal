@@ -62,11 +62,25 @@
                                 <div class="folder-icon">📁</div>
                                 <span>{{.Name}}</span>
                             </a>
+                            <div class="item-actions">
+                                <form action="/delete" method="POST" class="delete-form">
+                                    <input type="hidden" name="path" value="{{.Path}}">
+                                    <input type="hidden" name="currentDir" value="{{$.CurrentPath}}">
+                                    <button type="button" class="delete-btn" title="Delete folder">🗑️</button>
+                                </form>
+                            </div>
                         {{else}}
                             <a href="javascript:void(0);" class="image-item" data-image="/view/{{.Path}}" data-detail="/view/{{.Path}}" data-name="{{.Name}}">
                                 <div class="image-preview" style="background-image: url('/view/{{.Path}}')"></div>
                                 <span>{{.Name}}</span>
                             </a>
+                            <div class="item-actions">
+                                <form action="/delete" method="POST" class="delete-form">
+                                    <input type="hidden" name="path" value="{{.Path}}">
+                                    <input type="hidden" name="currentDir" value="{{$.CurrentPath}}">
+                                    <button type="button" class="delete-btn" title="Delete file">🗑️</button>
+                                </form>
+                            </div>
                         {{end}}
                     </div>
                 {{end}}
@@ -102,6 +116,20 @@
             const uploadBtn = document.getElementById('upload-btn');
             const selectFilesBtn = document.getElementById('select-files-btn');
             const uploadForm = document.getElementById('upload-form');
+
+            // Delete button functionality
+            const deleteButtons = document.querySelectorAll('.delete-btn');
+            deleteButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const form = this.closest('.delete-form');
+                    const isFolder = this.closest('.gallery-item').querySelector('.folder') !== null;
+                    const itemName = this.closest('.gallery-item').querySelector('span').textContent;
+
+                    if (confirm(`Are you sure you want to delete ${isFolder ? 'folder' : 'file'} "${itemName}"?${isFolder ? ' This will delete all contents inside this folder.' : ''}`)) {
+                        form.submit();
+                    }
+                });
+            });
 
             // Prevent default drag behaviors
             ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {

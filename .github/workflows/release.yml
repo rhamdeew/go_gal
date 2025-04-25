@@ -1,0 +1,97 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Run workflow on version tags, e.g. v1.0.0
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # Build for major platforms (Windows, macOS, Linux)
+        goos: [linux, windows, darwin]
+        goarch: [amd64, arm64]
+        exclude:
+          # Exclude some combinations that don't need to be built
+          - goos: windows
+            goarch: arm64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x' # Match the version used in go.mod
+          check-latest: true
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Run tests
+        run: go test -v ./...
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          # Determine the file extension based on OS
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            EXTENSION=".exe"
+          else
+            EXTENSION=""
+          fi
+
+          # Build the binary
+          go build -v -o "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" main.go
+
+          # Make sure required directories are copied
+          mkdir -p release_dir/templates
+          mkdir -p release_dir/static
+          cp -r templates/* release_dir/templates/
+          cp -r static/* release_dir/static/
+          cp "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" release_dir/
+
+          # Create a zip archive
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cd release_dir && zip -r "../go_gal_${{ matrix.goos }}_${{ matrix.goarch }}.zip" .
+          else
+            cd release_dir && tar -czvf "../go_gal_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" .
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: go_gal_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: |
+            go_gal_${{ matrix.goos }}_${{ matrix.goarch }}*
+          if-no-files-found: error
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        id: create_release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: artifacts/**/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

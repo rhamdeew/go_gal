@@ -5,6 +5,7 @@
 *.so
 *.dylib
 go_gal
+go_gal_*
 
 # Test binary, built with `go test -c`
 *.test
@@ -33,3 +34,7 @@ gallery/*.enc
 
 # SSL certificates
 *.pem
+
+# CI/CD artifacts
+*.zip
+*.tar.gz
