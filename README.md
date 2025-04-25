@@ -8,6 +8,8 @@
 
 A password-protected web gallery application written in Go. All folders and files are encrypted, and only users with the correct password can access and view the content.
 
+![go_gallery](https://github.com/user-attachments/assets/3df10213-0fd5-4824-b7f5-6d69b0273b75)
+
 ## Features
 
 - Password-protected access to the gallery
