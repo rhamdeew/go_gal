@@ -9,6 +9,7 @@ SERVICE_NAME="go_gal"
 SERVICE_FILE="$SERVICE_NAME.service"
 BINARY_NAME="go_gal"
 BINARY_PATTERN="go_gal*"
+SYS_GROUP="gogal"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -70,6 +71,12 @@ KEY_FILE=${KEY_FILE:-key.pem}
 
 echo "Installing Go Crypto Gallery to $INSTALL_DIR..."
 
+# Create system group if it doesn't exist
+if ! getent group "$SYS_GROUP" > /dev/null; then
+  echo "Creating system group $SYS_GROUP..."
+  groupadd --system "$SYS_GROUP"
+fi
+
 # Create installation directory
 mkdir -p "$INSTALL_DIR"
 
@@ -129,9 +136,19 @@ sed -i "s|Environment=\"PORT=.*\"|Environment=\"PORT=$PORT\"|" "/etc/systemd/sys
 sed -i "s|Environment=\"HOST=.*\"|Environment=\"HOST=$HOST\"|" "/etc/systemd/system/$SERVICE_FILE"
 sed -i "s|Environment=\"SSL_OPTS=.*\"|Environment=\"SSL_OPTS=$SSL_OPTS\"|" "/etc/systemd/system/$SERVICE_FILE"
 
-# Set proper permissions - use a system user that always exists
-chown -R root:root "$INSTALL_DIR"
-chmod -R 755 "$INSTALL_DIR"
+# Add or update Group directive in service file
+if grep -q "^Group=" "/etc/systemd/system/$SERVICE_FILE"; then
+  sed -i "s|^Group=.*|Group=$SYS_GROUP|" "/etc/systemd/system/$SERVICE_FILE"
+else
+  # Find the User= line and add Group= after it
+  sed -i "/^User=/ a Group=$SYS_GROUP" "/etc/systemd/system/$SERVICE_FILE"
+fi
+
+# Set proper permissions using the system group
+chown -R root:$SYS_GROUP "$INSTALL_DIR"
+chmod -R 750 "$INSTALL_DIR"
+# Ensure write permissions for data directory
+chmod 770 "$INSTALL_DIR/gallery"
 
 # Reload systemd configuration
 systemctl daemon-reload

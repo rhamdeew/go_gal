@@ -12,7 +12,7 @@ The systemd service file (`go_gal.service`) contains the following sections:
 [Unit]
 Description=Go Crypto Gallery - Encrypted file gallery service
 After=network.target
-Documentation=https://github.com/yourusername/go_gal
+Documentation=https://github.com/rhamdeew/go_gal
 ```
 
 - `Description`: A human-readable name for the service

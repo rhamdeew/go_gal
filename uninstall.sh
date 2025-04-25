@@ -5,6 +5,8 @@ set -e
 
 SERVICE_NAME="go_gal"
 INSTALL_DIR="/opt/go_gal"
+SYS_GROUP="gogal"
+REMOVE_GROUP=false
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -13,10 +15,15 @@ while [[ $# -gt 0 ]]; do
       INSTALL_DIR="${1#*=}"
       shift
       ;;
+    --remove-group)
+      REMOVE_GROUP=true
+      shift
+      ;;
     --help)
       echo "Usage: $0 [OPTIONS]"
       echo "Options:"
       echo "  --dir=DIR      Installation directory to remove (default: /opt/go_gal)"
+      echo "  --remove-group Remove the gogal system group"
       echo "  --help         Show this help message"
       exit 0
       ;;
@@ -62,6 +69,19 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
   echo "Installation directory removed."
 else
   echo "Installation directory has been kept."
+fi
+
+# Remove system group if requested
+if [ "$REMOVE_GROUP" = true ]; then
+  if getent group "$SYS_GROUP" > /dev/null; then
+    echo "Removing $SYS_GROUP system group..."
+    groupdel "$SYS_GROUP"
+    echo "System group removed."
+  else
+    echo "System group $SYS_GROUP does not exist."
+  fi
+else
+  echo "System group $SYS_GROUP has been kept. Use --remove-group to remove it."
 fi
 
 echo "Uninstallation completed successfully!"
