@@ -124,8 +124,16 @@ chmod +x "$INSTALL_DIR/$BINARY_NAME"
 cp -r templates "$INSTALL_DIR/" 2>/dev/null || echo "Warning: templates directory not found"
 cp -r static "$INSTALL_DIR/" 2>/dev/null || echo "Warning: static directory not found"
 
+# Ensure favicon files exist (they're needed for browsers)
+if [ ! -f "$INSTALL_DIR/static/images/favicon.ico" ]; then
+  echo "Warning: favicon.ico not found - browsers may show default icon"
+fi
+
 # Create gallery directory
 mkdir -p "$INSTALL_DIR/gallery"
+
+# Create thumbnails directory
+mkdir -p "$INSTALL_DIR/thumbnails"
 
 # Generate random keys if not provided
 if [ -z "$SESSION_KEY" ]; then
@@ -204,8 +212,9 @@ fi
 # Set proper permissions using the system user and group
 chown -R $SYS_USER:$SYS_GROUP "$INSTALL_DIR"
 chmod -R 750 "$INSTALL_DIR"
-# Ensure write permissions for data directory
+# Ensure write permissions for data directories
 chmod 770 "$INSTALL_DIR/gallery"
+chmod 770 "$INSTALL_DIR/thumbnails"
 
 # Reload systemd configuration
 systemctl daemon-reload

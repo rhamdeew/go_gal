@@ -74,7 +74,7 @@ if [ -f "/etc/systemd/system/$SERVICE_NAME.service" ]; then
 fi
 
 # Ask for confirmation before removing installation directory
-read -p "Do you want to remove the installation directory $INSTALL_DIR? (y/n): " -n 1 -r
+read -p "Do you want to remove the installation directory $INSTALL_DIR? This will delete all gallery data and thumbnails. (y/n): " -n 1 -r
 echo
 if [[ $REPLY =~ ^[Yy]$ ]]; then
   echo "Removing installation directory..."

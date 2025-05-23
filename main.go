@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -16,18 +17,26 @@ import (
 	"flag"
 	"fmt"
 	"html/template"
+	"image"
+	"image/color"
+	"image/gif"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
+	"github.com/nfnt/resize"
+	"golang.org/x/image/webp"
 )
 
 // Global variables
@@ -59,6 +68,7 @@ var (
 		return []byte(salt)
 	}()
 	galleryDir   = filepath.Join(execDir, "gallery")
+	thumbnailsDir = filepath.Join(execDir, "thumbnails")
 	encryptedExt = ".enc" // Extension for encrypted files
 )
 
@@ -132,6 +142,15 @@ func main() {
 		log.Printf("Created gallery directory at: %s", galleryDir)
 	}
 
+	// Create thumbnails directory if it doesn't exist
+	if _, err := os.Stat(thumbnailsDir); os.IsNotExist(err) {
+		err = os.MkdirAll(thumbnailsDir, 0750)
+		if err != nil {
+			log.Fatalf("Failed to create thumbnails directory: %v", err)
+		}
+		log.Printf("Created thumbnails directory at: %s", thumbnailsDir)
+	}
+
 	r := mux.NewRouter()
 
 	// Define routes
@@ -142,7 +161,17 @@ func main() {
 	r.HandleFunc("/createdir", createDirHandler).Methods("POST")
 	r.HandleFunc("/delete", deleteHandler).Methods("POST")
 	r.HandleFunc("/view/{path:.*}", viewHandler)
+	r.HandleFunc("/thumbnail/{path:.*}", thumbnailHandler)
 	r.HandleFunc("/logout", logoutHandler)
+
+	// Serve favicon and manifest from root paths (browser defaults)
+	r.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, filepath.Join(execDir, "static", "images", "favicon.ico"))
+	})
+	r.HandleFunc("/site.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/manifest+json")
+		http.ServeFile(w, r, filepath.Join(execDir, "static", "images", "site.webmanifest"))
+	})
 
 	// Set up static file server for CSS, JS
 	r.PathPrefix("/static/").Handler(http.StripPrefix("/static/", http.FileServer(http.Dir(filepath.Join(execDir, "static")))))
@@ -265,6 +294,202 @@ func generateSelfSignedCert(certPath, keyPath string) error {
 	}
 
 	return nil
+}
+
+// isImageFile checks if a file is an image based on its extension
+func isImageFile(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
+		return true
+	}
+	return false
+}
+
+// isVideoFile checks if a file is a video based on its extension
+func isVideoFile(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	switch ext {
+	case ".mp4", ".mov", ".avi", ".mkv", ".webm", ".3gp", ".flv", ".wmv", ".m4v":
+		return true
+	}
+	return false
+}
+
+// generateImageThumbnail creates a thumbnail from an image
+func generateImageThumbnail(imageData []byte, filename string) ([]byte, error) {
+	// Decode the image
+	var img image.Image
+	var err error
+
+	ext := strings.ToLower(filepath.Ext(filename))
+	reader := strings.NewReader(string(imageData))
+
+	switch ext {
+	case ".jpg", ".jpeg":
+		img, err = jpeg.Decode(reader)
+	case ".png":
+		img, err = png.Decode(reader)
+	case ".gif":
+		img, err = gif.Decode(reader)
+	case ".webp":
+		img, err = webp.Decode(reader)
+	default:
+		return nil, fmt.Errorf("unsupported image format: %s", ext)
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("failed to decode image: %v", err)
+	}
+
+	// Resize the image to thumbnail size (200x200 max, maintaining aspect ratio)
+	thumbnail := resize.Thumbnail(200, 200, img, resize.Lanczos3)
+
+	// Encode as JPEG for consistent thumbnail format
+	var buf bytes.Buffer
+	err = jpeg.Encode(&buf, thumbnail, &jpeg.Options{Quality: 85})
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode thumbnail: %v", err)
+	}
+
+	return buf.Bytes(), nil
+}
+
+// generateVideoThumbnail creates a thumbnail from a video using ffmpeg
+func generateVideoThumbnail(videoPath, outputPath string) error {
+	// Check if ffmpeg is available
+	_, err := exec.LookPath("ffmpeg")
+	if err != nil {
+		return fmt.Errorf("ffmpeg not found in PATH, cannot generate video thumbnails")
+	}
+
+	// Use ffmpeg to extract a frame at 1 second
+	cmd := exec.Command("ffmpeg",
+		"-i", videoPath,
+		"-ss", "00:00:01.000",
+		"-vframes", "1",
+		"-vf", "scale=200:200:force_original_aspect_ratio=decrease,pad=200:200:(ow-iw)/2:(oh-ih)/2",
+		"-y", // Overwrite output file
+		outputPath)
+
+	err = cmd.Run()
+	if err != nil {
+		return fmt.Errorf("ffmpeg failed: %v", err)
+	}
+
+	return nil
+}
+
+// createThumbnail generates and saves an encrypted thumbnail
+func createThumbnail(originalData []byte, filename string, passwordHash string) ([]byte, error) {
+	var thumbnailData []byte
+	var err error
+
+	if isImageFile(filename) {
+		thumbnailData, err = generateImageThumbnail(originalData, filename)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate image thumbnail: %v", err)
+		}
+	} else if isVideoFile(filename) {
+		// For videos, we need to temporarily save the file to process it with ffmpeg
+		tempDir := filepath.Join(os.TempDir(), "go_gal_temp")
+		err := os.MkdirAll(tempDir, 0755)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create temp directory: %v", err)
+		}
+		defer os.RemoveAll(tempDir)
+
+		tempVideoPath := filepath.Join(tempDir, "temp_video"+filepath.Ext(filename))
+		tempThumbnailPath := filepath.Join(tempDir, "thumbnail.jpg")
+
+		// Write video data to temp file
+		err = os.WriteFile(tempVideoPath, originalData, 0644)
+		if err != nil {
+			return nil, fmt.Errorf("failed to write temp video file: %v", err)
+		}
+
+		// Generate thumbnail
+		err = generateVideoThumbnail(tempVideoPath, tempThumbnailPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to generate video thumbnail: %v", err)
+		}
+
+		// Read the generated thumbnail
+		thumbnailData, err = os.ReadFile(tempThumbnailPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read generated thumbnail: %v", err)
+		}
+	} else {
+		return nil, fmt.Errorf("unsupported file type for thumbnail generation")
+	}
+
+	return thumbnailData, nil
+}
+
+// generatePlaceholderImage creates a simple placeholder image for videos
+func generatePlaceholderImage(filename string) []byte {
+	// Create a simple colored rectangle as placeholder
+	img := image.NewRGBA(image.Rect(0, 0, 200, 200))
+
+	// Set background color based on file type
+	isVideo := isVideoFile(filename)
+	var bgR, bgG, bgB uint8
+
+	if isVideo {
+		// Blue gradient for videos
+		bgR, bgG, bgB = 102, 126, 234
+	} else {
+		// Gray for images or unknown
+		bgR, bgG, bgB = 240, 240, 240
+	}
+
+	// Fill background
+	for y := 0; y < 200; y++ {
+		for x := 0; x < 200; x++ {
+			img.Set(x, y, color.RGBA{bgR, bgG, bgB, 255})
+		}
+	}
+
+	// Create a gradient effect
+	for y := 0; y < 200; y++ {
+		for x := 0; x < 200; x++ {
+			factor := float64(y) / 200.0 * 0.3 // 30% gradient
+			newR := uint8(float64(bgR) * (1.0 - factor))
+			newG := uint8(float64(bgG) * (1.0 - factor))
+			newB := uint8(float64(bgB) * (1.0 - factor))
+			img.Set(x, y, color.RGBA{newR, newG, newB, 255})
+		}
+	}
+
+	// Add a simple border
+	borderColor := color.RGBA{uint8(float64(bgR) * 0.7), uint8(float64(bgG) * 0.7), uint8(float64(bgB) * 0.7), 255}
+
+	// Top and bottom borders
+	for x := 0; x < 200; x++ {
+		img.Set(x, 0, borderColor)
+		img.Set(x, 1, borderColor)
+		img.Set(x, 198, borderColor)
+		img.Set(x, 199, borderColor)
+	}
+
+	// Left and right borders
+	for y := 0; y < 200; y++ {
+		img.Set(0, y, borderColor)
+		img.Set(1, y, borderColor)
+		img.Set(198, y, borderColor)
+		img.Set(199, y, borderColor)
+	}
+
+	// Encode as JPEG
+	var buf bytes.Buffer
+	err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 85})
+	if err != nil {
+		log.Printf("Error encoding placeholder image: %v", err)
+		// Return a minimal JPEG if encoding fails
+		return []byte{}
+	}
+
+	return buf.Bytes()
 }
 
 // indexHandler shows the login page or redirects to gallery if already logged in
@@ -591,6 +816,107 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// thumbnailHandler decrypts and serves a thumbnail image
+func thumbnailHandler(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in thumbnailHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in thumbnailHandler: ok=%v, auth=%v", ok, auth)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	passwordHash, ok := session.Values["password_hash"].(string)
+	if !ok {
+		log.Printf("Failed to retrieve password hash from session in thumbnailHandler")
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	vars := mux.Vars(r)
+	requestPath := vars["path"]
+	if requestPath == "" {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize the path to prevent directory traversal
+	cleanPath := filepath.Clean(requestPath)
+	cleanPath = strings.Replace(cleanPath, "\\", "/", -1) // Normalize backslashes
+	if cleanPath != "/" && strings.HasPrefix(cleanPath, "/") {
+		cleanPath = cleanPath[1:] // Remove leading slash for proper joining
+	}
+
+	// Construct the thumbnail file path
+	thumbnailPath := filepath.Join(thumbnailsDir, cleanPath)
+	if !strings.HasPrefix(thumbnailPath, thumbnailsDir) {
+		http.Error(w, "Invalid thumbnail path", http.StatusBadRequest)
+		return
+	}
+
+	if !strings.HasSuffix(thumbnailPath, encryptedExt) {
+		thumbnailPath += encryptedExt
+	}
+
+	// Check if thumbnail exists
+	if _, err := os.Stat(thumbnailPath); os.IsNotExist(err) {
+		// If thumbnail doesn't exist, try to determine the original filename and generate a placeholder
+		// We need to decrypt the filename to determine if it's a video or image
+		encFileName := filepath.Base(strings.TrimSuffix(cleanPath, encryptedExt))
+		originalFileName, decryptErr := decryptFileName(encFileName, passwordHash)
+
+		var placeholderData []byte
+		if decryptErr != nil {
+			// If we can't decrypt the filename, generate a generic placeholder
+			placeholderData = generatePlaceholderImage("unknown.file")
+		} else {
+			// Generate appropriate placeholder based on file type
+			placeholderData = generatePlaceholderImage(originalFileName)
+		}
+
+		// Send the placeholder as JPEG
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "public, max-age=300") // Cache for 5 minutes
+		if _, err := w.Write(placeholderData); err != nil {
+			log.Printf("Error writing placeholder response: %v", err)
+		}
+		return
+	}
+
+	// Decrypt and serve the thumbnail
+	decryptedData, err := decryptFile(thumbnailPath, passwordHash)
+	if err != nil {
+		// Check if this is a password error
+		if strings.Contains(err.Error(), "incorrect password") {
+			// Invalidate the user's session
+			session.Values["authenticated"] = false
+			session.Values["password_hash"] = ""
+			if err := session.Save(r, w); err != nil {
+				log.Printf("Error saving session: %v", err)
+			}
+
+			// Redirect to login page with error
+			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+			return
+		}
+
+		http.Error(w, "Error decrypting thumbnail: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Send the thumbnail as JPEG
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "public, max-age=3600") // Cache for 1 hour
+	if _, err := w.Write(decryptedData); err != nil {
+		log.Printf("Error writing thumbnail response: %v", err)
+	}
+}
+
 // uploadHandler handles file uploads
 func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	session, err := store.Get(r, "gallery-session")
@@ -684,6 +1010,30 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error saving encrypted file", http.StatusInternalServerError)
 			return
 		}
+
+		// Generate and save thumbnail if it's an image or video
+		if isImageFile(header.Filename) || isVideoFile(header.Filename) {
+			thumbnailData, err := createThumbnail(fileData, header.Filename, passwordHash)
+			if err != nil {
+				log.Printf("Warning: Failed to generate thumbnail for %s: %v", header.Filename, err)
+				// Generate placeholder thumbnail instead
+				placeholderData := generatePlaceholderImage(header.Filename)
+				thumbnailData = placeholderData
+			}
+
+			// Save encrypted thumbnail (either real thumbnail or placeholder)
+			thumbnailDir := filepath.Join(thumbnailsDir, cleanDir)
+			err = os.MkdirAll(thumbnailDir, 0750)
+			if err != nil {
+				log.Printf("Warning: Failed to create thumbnail directory: %v", err)
+			} else {
+				thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
+				err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
+				if err != nil {
+					log.Printf("Warning: Failed to save thumbnail for %s: %v", header.Filename, err)
+				}
+			}
+		}
 	} else {
 		// Process multiple files
 		for _, fileHeader := range files {
@@ -715,6 +1065,30 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				http.Error(w, fmt.Sprintf("Error saving encrypted file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
 				continue
+			}
+
+			// Generate and save thumbnail if it's an image or video
+			if isImageFile(fileHeader.Filename) || isVideoFile(fileHeader.Filename) {
+				thumbnailData, err := createThumbnail(fileData, fileHeader.Filename, passwordHash)
+				if err != nil {
+					log.Printf("Warning: Failed to generate thumbnail for %s: %v", fileHeader.Filename, err)
+					// Generate placeholder thumbnail instead
+					placeholderData := generatePlaceholderImage(fileHeader.Filename)
+					thumbnailData = placeholderData
+				}
+
+				// Save encrypted thumbnail (either real thumbnail or placeholder)
+				thumbnailDir := filepath.Join(thumbnailsDir, cleanDir)
+				err = os.MkdirAll(thumbnailDir, 0750)
+				if err != nil {
+					log.Printf("Warning: Failed to create thumbnail directory: %v", err)
+				} else {
+					thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
+					err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
+					if err != nil {
+						log.Printf("Warning: Failed to save thumbnail for %s: %v", fileHeader.Filename, err)
+					}
+				}
 			}
 		}
 	}

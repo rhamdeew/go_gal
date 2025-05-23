@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="100" height="80" viewBox="0 0 100 80" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background rounded rectangle -->
+  <rect x="10" y="10" width="80" height="60" rx="15" ry="15"
+        fill="#0070c9" stroke="#005ba1" stroke-width="2"/>
+
+  <!-- GO text -->
+  <text x="50" y="35" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="18" font-weight="700" text-anchor="middle" fill="white">GO</text>
+
+  <!-- gal text -->
+  <text x="50" y="55" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+        font-size="16" font-weight="400" text-anchor="middle" fill="white">gal</text>
+</svg>

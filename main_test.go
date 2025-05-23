@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/aes"
 	"encoding/hex"
 	"net/http"
@@ -241,5 +242,30 @@ func TestGalleryHandler(t *testing.T) {
 	// Just check status code since we can't fully mock templates
 	if status := rr.Code; status != http.StatusOK {
 		t.Errorf("Handler returned wrong status code: got %v want %v", status, http.StatusOK)
+	}
+}
+
+func TestGeneratePlaceholderImage(t *testing.T) {
+	// Test video placeholder
+	videoPlaceholder := generatePlaceholderImage("test_video.mp4")
+	if len(videoPlaceholder) == 0 {
+		t.Error("Video placeholder should not be empty")
+	}
+
+	// Test image placeholder
+	imagePlaceholder := generatePlaceholderImage("test_image.jpg")
+	if len(imagePlaceholder) == 0 {
+		t.Error("Image placeholder should not be empty")
+	}
+
+	// Test unknown file placeholder
+	unknownPlaceholder := generatePlaceholderImage("unknown.xyz")
+	if len(unknownPlaceholder) == 0 {
+		t.Error("Unknown file placeholder should not be empty")
+	}
+
+	// Video and image placeholders should be different
+	if bytes.Equal(videoPlaceholder, imagePlaceholder) {
+		t.Error("Video and image placeholders should be different")
 	}
 }

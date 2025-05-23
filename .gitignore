@@ -32,6 +32,9 @@ Thumbs.db
 # Gallery
 gallery/*.enc
 
+# Thumbnails
+thumbnails/
+
 # SSL certificates
 *.pem
 
