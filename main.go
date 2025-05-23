@@ -115,6 +115,65 @@ type PageData struct {
 	CurrentPath string
 	Items       []GalleryItem
 	Error       string
+	Breadcrumbs []Breadcrumb
+}
+
+// Breadcrumb represents a path segment in the navigation
+type Breadcrumb struct {
+	Name string // Decrypted display name
+	Path string // Encrypted path for URL
+}
+
+// buildBreadcrumbs creates a breadcrumb trail with decrypted directory names
+func buildBreadcrumbs(currentPath string, passwordHash string) []Breadcrumb {
+	breadcrumbs := []Breadcrumb{
+		{Name: "Home", Path: "/"},
+	}
+
+	if currentPath == "" || currentPath == "/" {
+		return breadcrumbs
+	}
+
+	// Split path into segments
+	segments := strings.Split(strings.Trim(currentPath, "/"), "/")
+	cumulativePath := ""
+
+	for _, segment := range segments {
+		if segment == "" {
+			continue
+		}
+
+		// Build cumulative path for URL
+		if cumulativePath == "" {
+			cumulativePath = segment
+		} else {
+			cumulativePath = cumulativePath + "/" + segment
+		}
+
+		// Try to decrypt the segment name
+		// Remove .enc extension if present
+		encSegment := segment
+		if strings.HasSuffix(encSegment, encryptedExt) {
+			encSegment = strings.TrimSuffix(encSegment, encryptedExt)
+		}
+
+		decryptedName, err := decryptFileName(encSegment, passwordHash)
+		if err != nil {
+			// If decryption fails, use the encrypted name (truncated for display)
+			displayName := encSegment
+			if len(displayName) > 20 {
+				displayName = displayName[:17] + "..."
+			}
+			decryptedName = displayName
+		}
+
+		breadcrumbs = append(breadcrumbs, Breadcrumb{
+			Name: decryptedName,
+			Path: "/" + cumulativePath,
+		})
+	}
+
+	return breadcrumbs
 }
 
 func main() {
@@ -592,7 +651,9 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	fsPath := filepath.Join(galleryDir, cleanPath)
 	if !strings.HasPrefix(fsPath, galleryDir) {
 		if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
-			Error: "Invalid directory path",
+			Error:       "Invalid directory path",
+			CurrentPath: cleanPath,
+			Breadcrumbs: buildBreadcrumbs(cleanPath, passwordHash),
 		}); err != nil {
 			log.Printf("Error executing template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
@@ -603,7 +664,9 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	info, err := os.Stat(fsPath)
 	if os.IsNotExist(err) {
 		if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
-			Error: "Path does not exist",
+			Error:       "Path does not exist",
+			CurrentPath: cleanPath,
+			Breadcrumbs: buildBreadcrumbs(cleanPath, passwordHash),
 		}); err != nil {
 			log.Printf("Error executing template: %v", err)
 			http.Error(w, "Error rendering template", http.StatusInternalServerError)
@@ -675,6 +738,7 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
 		CurrentPath: cleanPath,
 		Items:       items,
+		Breadcrumbs: buildBreadcrumbs(cleanPath, passwordHash),
 	}); err != nil {
 		log.Printf("Error executing template: %v", err)
 		http.Error(w, "Error rendering template", http.StatusInternalServerError)

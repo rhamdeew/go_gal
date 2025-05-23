@@ -28,10 +28,12 @@
         {{end}}
 
         <div class="current-path">
-            <span>Current path: {{.CurrentPath}}</span>
-            {{if ne .CurrentPath "/"}}
-            <a href="/gallery/" class="path-link">Home</a>
-            {{end}}
+            <nav class="breadcrumb">
+                {{range $index, $crumb := .Breadcrumbs}}
+                    {{if $index}}<span class="breadcrumb-separator"> / </span>{{end}}
+                    <a href="/gallery{{$crumb.Path}}" class="breadcrumb-link">{{$crumb.Name}}</a>
+                {{end}}
+            </nav>
         </div>
 
         <div class="gallery-controls">
