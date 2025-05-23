@@ -143,6 +143,38 @@ h1, h2, h3 {
     text-decoration: underline;
 }
 
+/* Breadcrumb Styles */
+.breadcrumb {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.breadcrumb-link {
+    color: #0070c9;
+    text-decoration: none;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+.breadcrumb-link:hover {
+    background-color: rgba(0, 112, 201, 0.1);
+    text-decoration: none;
+}
+
+.breadcrumb-separator {
+    color: #666;
+    margin: 0 5px;
+    user-select: none;
+}
+
+.breadcrumb-current {
+    color: #333;
+    font-weight: 500;
+    padding: 2px 4px;
+}
+
 .gallery-controls {
     display: flex;
     gap: 20px;
