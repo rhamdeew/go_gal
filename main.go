@@ -562,6 +562,25 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		contentType = "image/gif"
 	case ".pdf":
 		contentType = "application/pdf"
+	// Video formats - iPhone, Android and common formats
+	case ".mp4":
+		contentType = "video/mp4"
+	case ".mov":
+		contentType = "video/quicktime"
+	case ".avi":
+		contentType = "video/x-msvideo"
+	case ".mkv":
+		contentType = "video/x-matroska"
+	case ".webm":
+		contentType = "video/webm"
+	case ".3gp":
+		contentType = "video/3gpp"
+	case ".flv":
+		contentType = "video/x-flv"
+	case ".wmv":
+		contentType = "video/x-ms-wmv"
+	case ".m4v":
+		contentType = "video/x-m4v"
 	}
 
 	// Send the file to the client
