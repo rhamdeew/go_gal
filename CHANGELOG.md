@@ -5,6 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.14] - 2025-01-25
+
+### Added
+- **Automatic thumbnail generation for images and videos** - Major performance improvement for gallery browsing
+- **Fast thumbnail previews** - 200x200 pixel thumbnails with maintained aspect ratio for instant loading
+- **Video thumbnail extraction** using FFmpeg - Extract preview frames from the first second of videos
+- **Image thumbnail generation** for JPEG, PNG, GIF, and WebP formats using native Go libraries
+- **Encrypted thumbnail storage** - All thumbnails are encrypted and stored separately from original files
+- **Intelligent placeholder system** - Colored placeholder images when thumbnail generation fails
+  - Blue placeholders for video files (when FFmpeg unavailable)
+  - Gray placeholders for image files (when generation fails)
+- **Browser caching** - 1-hour cache headers for improved performance
+- **FFmpeg integration** with automatic detection and graceful fallback
+- New dependencies: `github.com/nfnt/resize` and `golang.org/x/image` for image processing
+- Support documentation for FFmpeg installation across platforms (macOS, Ubuntu/Debian, Windows)
+- Comprehensive troubleshooting guide for thumbnail-related issues
+
+### Changed
+- **Dramatically improved gallery performance** - Thumbnails load instead of full-resolution files
+- Enhanced installation script to automatically create `thumbnails/` directory
+- Updated `.gitignore` to exclude `thumbnails/` directory from version control
+- Updated README.md with detailed thumbnail system documentation
+- Installation script now ensures proper permissions for thumbnails directory (770)
+- Improved user experience with faster gallery browsing and reduced bandwidth usage
+
+### Infrastructure
+- Added `thumbnails/` directory creation to installation process
+- Enhanced systemd service setup to handle thumbnail directory permissions
+- Updated favicon handling in installation script with proper warnings
+
 ## [0.0.12] - 2025-01-23
 
 ### Added

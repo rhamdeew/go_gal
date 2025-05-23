@@ -15,15 +15,74 @@ A password-protected web gallery application written in Go. All folders and file
 - Password-protected access to the gallery
 - All folders and files are encrypted with your password
 - Files are decrypted on-the-fly when viewed
+- **Automatic thumbnail generation for images and videos**
+- **Fast gallery browsing with thumbnail previews**
 - Create new folders with encrypted names
 - Upload images and videos to your gallery
 - Support for common video formats (MP4, MOV, AVI, MKV, WebM, 3GP, FLV, WMV, M4V)
+- Support for common image formats (JPEG, PNG, GIF, WebP)
 - Built-in video player with controls for viewing videos
 - Multi-file upload support with drag-and-drop interface
 - Image and video preview before uploading
 - Modern and responsive UI with unified media gallery
 - No server-side password storage for enhanced security
 - HTTPS support with self-signed certificates
+
+## Thumbnail System
+
+The gallery now includes automatic thumbnail generation for both images and videos, significantly improving browsing performance and user experience.
+
+### Supported Formats for Thumbnails
+
+**Images** (auto-thumbnailed):
+- JPEG/JPG
+- PNG
+- GIF
+- WebP
+
+**Videos** (auto-thumbnailed with FFmpeg):
+- MP4, MOV, AVI, MKV, WebM, 3GP, FLV, WMV, M4V
+
+### How Thumbnails Work
+
+1. **Automatic Generation**: When you upload images or videos, thumbnails are automatically created
+2. **Encrypted Storage**: Thumbnails are encrypted and stored separately from original files
+3. **Fast Loading**: Gallery displays thumbnails instead of loading full files
+4. **Video Previews**: Video thumbnails are extracted from the first second of the video
+5. **Optimized Size**: All thumbnails are 200x200 pixels maximum, maintaining aspect ratio
+6. **Fallback Placeholders**: When thumbnail generation fails (e.g., FFmpeg not available), colored placeholder images are automatically generated
+
+### FFmpeg Requirement
+
+For video thumbnail generation, FFmpeg must be installed:
+
+- **macOS**: `brew install ffmpeg`
+- **Ubuntu/Debian**: `sudo apt install ffmpeg`
+- **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH
+
+**Note**: Image thumbnails work without FFmpeg. Video files can still be uploaded and viewed without FFmpeg, but placeholder images will be shown instead of actual video thumbnails.
+
+## Troubleshooting
+
+### "FFmpeg not found" Error
+- **Issue**: Video uploads work, but colorful placeholder images appear instead of actual video thumbnails
+- **Solution**: Install FFmpeg and ensure it's in your system PATH
+- **Alternative**: Placeholder images still provide a visual representation - the gallery remains fully functional
+
+### Placeholder Images Instead of Thumbnails
+- **Blue placeholders**: Indicate video files without generated thumbnails (likely missing FFmpeg)
+- **Gray placeholders**: Indicate image files where thumbnail generation failed
+- **Note**: Placeholder images are automatically generated and encrypted like real thumbnails
+
+### Thumbnail Not Displaying
+- Check browser console for errors
+- Verify the file format is supported
+- Ensure FFmpeg is installed for video files (or expect placeholder images)
+
+### Performance Issues
+- Thumbnails are cached with 1-hour browser cache
+- Large video files may take time to generate thumbnails on first upload
+- Placeholder generation is much faster than video thumbnail extraction
 
 ## Security Features
 
@@ -56,6 +115,7 @@ export GO_GAL_SALT="your-random-secure-salt"
 ## Requirements
 
 - Go 1.18 or higher
+- FFmpeg (optional, for video thumbnail generation)
 
 ## Installation
 
@@ -74,6 +134,13 @@ export GO_GAL_SALT="your-random-secure-salt"
    ```
    go build -o go_gal
    ```
+
+4. Run the installation script included in the release:
+   ```
+   sudo ./install.sh
+   ```
+
+   The script will automatically detect and use any binary matching the pattern `go_gal*` in the current directory and create the necessary directories (gallery and thumbnails).
 
 ## Usage
 
@@ -187,7 +254,7 @@ The application can be installed as a systemd service for automatic startup and 
    sudo ./install.sh
    ```
 
-   The script will automatically detect and use any binary matching the pattern `go_gal*` in the current directory.
+   The script will automatically detect and use any binary matching the pattern `go_gal*` in the current directory and create the necessary directories (gallery and thumbnails).
 
 3. Start and enable the service:
    ```
