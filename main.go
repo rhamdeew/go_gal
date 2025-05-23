@@ -1336,6 +1336,27 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Also remove the corresponding thumbnail file or directory
+	thumbnailPath := filepath.Join(thumbnailsDir, cleanItemPath)
+	if strings.HasPrefix(thumbnailPath, thumbnailsDir) {
+		// Check if thumbnail exists before trying to remove it
+		if _, err := os.Stat(thumbnailPath); err == nil {
+			var thumbnailRemoveErr error
+			if info.IsDir() {
+				// Remove thumbnail directory recursively
+				thumbnailRemoveErr = os.RemoveAll(thumbnailPath)
+			} else {
+				// Remove thumbnail file
+				thumbnailRemoveErr = os.Remove(thumbnailPath)
+			}
+
+			if thumbnailRemoveErr != nil {
+				// Log the error but don't fail the request since the main file was already deleted
+				log.Printf("Warning: Failed to remove thumbnail for %s: %v", cleanItemPath, thumbnailRemoveErr)
+			}
+		}
+	}
+
 	// Construct proper redirect path
 	redirectPath := "/gallery/"
 	if cleanDir != "/" {
