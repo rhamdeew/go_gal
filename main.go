@@ -30,6 +30,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -745,7 +746,7 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// viewHandler decrypts and serves a file for viewing
+// viewHandler decrypts and serves a file for viewing with Range request support for videos
 func viewHandler(w http.ResponseWriter, r *http.Request) {
 	session, err := store.Get(r, "gallery-session")
 	if err != nil {
@@ -798,28 +799,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decrypt and serve the file
-	decryptedData, err := decryptFile(filePath, passwordHash)
-	if err != nil {
-		// Check if this is a password error
-		if strings.Contains(err.Error(), "incorrect password") {
-			// Invalidate the user's session
-			session.Values["authenticated"] = false
-			session.Values["password_hash"] = ""
-			if err := session.Save(r, w); err != nil {
-				log.Printf("Error saving session: %v", err)
-			}
-
-			// Redirect to login page with error
-			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
-			return
-		}
-
-		http.Error(w, "Error decrypting file: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	// Determine content type
+	// Determine content type first
 	originalName := strings.TrimSuffix(filepath.Base(requestPath), encryptedExt)
 	decryptedName, err := decryptFileName(originalName, passwordHash)
 	if err != nil {
@@ -842,6 +822,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	contentType := "application/octet-stream"
+	isVideo := false
 	switch strings.ToLower(filepath.Ext(decryptedName)) {
 	case ".jpg", ".jpeg":
 		contentType = "image/jpeg"
@@ -854,30 +835,308 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 	// Video formats - iPhone, Android and common formats
 	case ".mp4":
 		contentType = "video/mp4"
+		isVideo = true
 	case ".mov":
 		contentType = "video/quicktime"
+		isVideo = true
 	case ".avi":
 		contentType = "video/x-msvideo"
+		isVideo = true
 	case ".mkv":
 		contentType = "video/x-matroska"
+		isVideo = true
 	case ".webm":
 		contentType = "video/webm"
+		isVideo = true
 	case ".3gp":
 		contentType = "video/3gpp"
+		isVideo = true
 	case ".flv":
 		contentType = "video/x-flv"
+		isVideo = true
 	case ".wmv":
 		contentType = "video/x-ms-wmv"
+		isVideo = true
 	case ".m4v":
 		contentType = "video/x-m4v"
+		isVideo = true
+	}
+
+	// For video files, use range-aware serving to support Mobile Safari
+	if isVideo {
+		err = serveVideoFile(w, r, filePath, passwordHash, contentType, decryptedName)
+		if err != nil {
+			// Check if this is a password error
+			if strings.Contains(err.Error(), "incorrect password") {
+				// Invalidate the user's session
+				session.Values["authenticated"] = false
+				session.Values["password_hash"] = ""
+				if err := session.Save(r, w); err != nil {
+					log.Printf("Error saving session: %v", err)
+				}
+
+				// Redirect to login page with error
+				http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+				return
+			}
+
+			http.Error(w, "Error serving video file: "+err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// For non-video files, use the original method (decrypt entire file)
+	decryptedData, err := decryptFile(filePath, passwordHash)
+	if err != nil {
+		// Check if this is a password error
+		if strings.Contains(err.Error(), "incorrect password") {
+			// Invalidate the user's session
+			session.Values["authenticated"] = false
+			session.Values["password_hash"] = ""
+			if err := session.Save(r, w); err != nil {
+				log.Printf("Error saving session: %v", err)
+			}
+
+			// Redirect to login page with error
+			http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+			return
+		}
+
+		http.Error(w, "Error decrypting file: "+err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	// Send the file to the client
 	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(decryptedData)))
 	if _, err := w.Write(decryptedData); err != nil {
 		log.Printf("Error writing response: %v", err)
 		// Error is already sent to client, nothing more we can do here
 	}
+}
+
+// serveVideoFile serves video files with Range request support for Mobile Safari compatibility
+func serveVideoFile(w http.ResponseWriter, r *http.Request, filePath, passwordHash, contentType, decryptedName string) error {
+	// Get the decrypted file size first
+	decryptedSize, err := getDecryptedFileSize(filePath, passwordHash)
+	if err != nil {
+		return err
+	}
+
+	// Set content type and basic headers
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Accept-Ranges", "bytes")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", decryptedName))
+	// Add headers that Mobile Safari expects for video playback
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
+	// Handle Range requests
+	rangeHeader := r.Header.Get("Range")
+	if rangeHeader == "" {
+		// No range request - serve the entire file
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", decryptedSize))
+		return streamDecryptedFile(w, filePath, passwordHash, 0, decryptedSize-1)
+	}
+
+	// Parse the Range header
+	ranges, err := parseRangeHeader(rangeHeader, decryptedSize)
+	if err != nil {
+		http.Error(w, "Invalid Range header", http.StatusRequestedRangeNotSatisfiable)
+		return err
+	}
+
+	if len(ranges) == 0 {
+		http.Error(w, "Invalid Range header", http.StatusRequestedRangeNotSatisfiable)
+		return fmt.Errorf("no valid ranges")
+	}
+
+	// For simplicity, only handle single range requests (most common case)
+	if len(ranges) > 1 {
+		// Multiple ranges not supported for now - serve entire file
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", decryptedSize))
+		return streamDecryptedFile(w, filePath, passwordHash, 0, decryptedSize-1)
+	}
+
+	// Handle single range request
+	start := ranges[0].start
+	end := ranges[0].end
+	if end >= decryptedSize {
+		end = decryptedSize - 1
+	}
+
+	contentLength := end - start + 1
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", contentLength))
+	w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, decryptedSize))
+	w.WriteHeader(http.StatusPartialContent)
+
+	return streamDecryptedFile(w, filePath, passwordHash, start, end)
+}
+
+// httpRange represents a single HTTP range
+type httpRange struct {
+	start int64
+	end   int64
+}
+
+// parseRangeHeader parses HTTP Range header and returns list of ranges
+func parseRangeHeader(rangeHeader string, size int64) ([]httpRange, error) {
+	if !strings.HasPrefix(rangeHeader, "bytes=") {
+		return nil, fmt.Errorf("invalid range header format")
+	}
+
+	rangeSpec := strings.TrimPrefix(rangeHeader, "bytes=")
+	ranges := strings.Split(rangeSpec, ",")
+	var result []httpRange
+
+	for _, r := range ranges {
+		r = strings.TrimSpace(r)
+		if r == "" {
+			continue
+		}
+
+		var start, end int64
+		var err error
+
+		if strings.HasPrefix(r, "-") {
+			// Suffix-byte-range-spec
+			suffix := strings.TrimPrefix(r, "-")
+			suffixLength, err := strconv.ParseInt(suffix, 10, 64)
+			if err != nil {
+				continue
+			}
+			start = size - suffixLength
+			if start < 0 {
+				start = 0
+			}
+			end = size - 1
+		} else {
+			// Range-spec or byte-range-spec
+			parts := strings.Split(r, "-")
+			if len(parts) != 2 {
+				continue
+			}
+
+			start, err = strconv.ParseInt(parts[0], 10, 64)
+			if err != nil {
+				continue
+			}
+
+			if parts[1] == "" {
+				// byte-range-spec with no end
+				end = size - 1
+			} else {
+				end, err = strconv.ParseInt(parts[1], 10, 64)
+				if err != nil {
+					continue
+				}
+			}
+		}
+
+		if start >= 0 && start < size && end >= start && end < size {
+			result = append(result, httpRange{start: start, end: end})
+		}
+	}
+
+	return result, nil
+}
+
+// getDecryptedFileSize returns the size of the decrypted file without fully decrypting it
+func getDecryptedFileSize(filePath, passwordHash string) (int64, error) {
+	fileInfo, err := os.Stat(filePath)
+	if err != nil {
+		return 0, err
+	}
+
+	// Calculate decrypted size: total file size - IV (16 bytes) - MAC size header (8 bytes) - MAC (32 bytes)
+	encryptedSize := fileInfo.Size()
+	if encryptedSize < 56 { // Minimum size: 16 (IV) + 8 (MAC size) + 32 (MAC) = 56 bytes
+		return 0, fmt.Errorf("encrypted file is too small")
+	}
+
+	// The decrypted size is the encrypted size minus the overhead
+	return encryptedSize - 56, nil
+}
+
+// streamDecryptedFile streams a portion of the decrypted file
+func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end int64) error {
+	// Open the encrypted file
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Read the IV
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(f, iv); err != nil {
+		return fmt.Errorf("file is corrupted or too small: %v", err)
+	}
+
+	// Read the HMAC size
+	macSizeBuf := make([]byte, 8)
+	if _, err := io.ReadFull(f, macSizeBuf); err != nil {
+		return fmt.Errorf("file is corrupted (missing HMAC size): %v", err)
+	}
+	macSize := int(macSizeBuf[0])
+	if macSize <= 0 || macSize > 64 {
+		return fmt.Errorf("file has invalid MAC size: %d", macSize)
+	}
+
+	// Read the HMAC
+	mac := make([]byte, macSize)
+	if _, err := io.ReadFull(f, mac); err != nil {
+		return fmt.Errorf("file is corrupted (missing HMAC): %v", err)
+	}
+
+	// For Range requests, we need to verify the entire file's HMAC first
+	// This is necessary because we can't verify integrity of partial data
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	encryptedSize := fileInfo.Size() - int64(aes.BlockSize) - 8 - int64(macSize)
+	if encryptedSize <= 0 {
+		return fmt.Errorf("file is corrupted (no encrypted data)")
+	}
+
+	// Read all encrypted data for HMAC verification
+	encryptedData := make([]byte, encryptedSize)
+	if _, err := io.ReadFull(f, encryptedData); err != nil {
+		return fmt.Errorf("file is corrupted (missing encrypted data): %v", err)
+	}
+
+	// Verify HMAC
+	h := hmac.New(sha256.New, []byte(passwordHash))
+	h.Write(encryptedData)
+	expectedMAC := h.Sum(nil)
+	if !hmac.Equal(mac, expectedMAC) {
+		return fmt.Errorf("decryption failed: incorrect password or tampered file")
+	}
+
+	// Create cipher for decryption
+	block, err := createAESCipher(passwordHash)
+	if err != nil {
+		return err
+	}
+
+	// Calculate which part of the encrypted data we need to decrypt
+	// Since we're using CFB mode, we need to decrypt from the beginning up to our end point
+	// But we only write the requested range
+	endByte := end + 1
+	if endByte > encryptedSize {
+		endByte = encryptedSize
+	}
+
+	// Decrypt the required portion
+	stream := cipher.NewCFBDecrypter(block, iv)
+	decryptedData := make([]byte, endByte)
+	stream.XORKeyStream(decryptedData, encryptedData[:endByte])
+
+	// Write only the requested range
+	rangeData := decryptedData[start:endByte]
+	_, err = w.Write(rangeData)
+	return err
 }
 
 // thumbnailHandler decrypts and serves a thumbnail image
