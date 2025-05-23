@@ -12,60 +12,60 @@ import (
 
 func TestParseRangeHeader(t *testing.T) {
 	tests := []struct {
-		name        string
-		rangeHeader string
-		size        int64
+		name         string
+		rangeHeader  string
+		size         int64
 		expectRanges []httpRange
-		expectError bool
+		expectError  bool
 	}{
 		{
-			name:        "Single range",
-			rangeHeader: "bytes=0-499",
-			size:        1000,
+			name:         "Single range",
+			rangeHeader:  "bytes=0-499",
+			size:         1000,
 			expectRanges: []httpRange{{start: 0, end: 499}},
-			expectError: false,
+			expectError:  false,
 		},
 		{
-			name:        "Range with no end",
-			rangeHeader: "bytes=500-",
-			size:        1000,
+			name:         "Range with no end",
+			rangeHeader:  "bytes=500-",
+			size:         1000,
 			expectRanges: []httpRange{{start: 500, end: 999}},
-			expectError: false,
+			expectError:  false,
 		},
 		{
-			name:        "Suffix range",
-			rangeHeader: "bytes=-500",
-			size:        1000,
+			name:         "Suffix range",
+			rangeHeader:  "bytes=-500",
+			size:         1000,
 			expectRanges: []httpRange{{start: 500, end: 999}},
-			expectError: false,
+			expectError:  false,
 		},
 		{
-			name:        "Multiple ranges",
-			rangeHeader: "bytes=0-199, 500-999",
-			size:        1000,
+			name:         "Multiple ranges",
+			rangeHeader:  "bytes=0-199, 500-999",
+			size:         1000,
 			expectRanges: []httpRange{{start: 0, end: 199}, {start: 500, end: 999}},
-			expectError: false,
+			expectError:  false,
 		},
 		{
-			name:        "Invalid format",
-			rangeHeader: "invalid-format",
-			size:        1000,
+			name:         "Invalid format",
+			rangeHeader:  "invalid-format",
+			size:         1000,
 			expectRanges: nil,
-			expectError: true,
+			expectError:  true,
 		},
 		{
-			name:        "Invalid range spec",
-			rangeHeader: "bytes=abc-def",
-			size:        1000,
+			name:         "Invalid range spec",
+			rangeHeader:  "bytes=abc-def",
+			size:         1000,
 			expectRanges: []httpRange{},
-			expectError: false,
+			expectError:  false,
 		},
 		{
-			name:        "Range beyond file size",
-			rangeHeader: "bytes=1500-2000",
-			size:        1000,
+			name:         "Range beyond file size",
+			rangeHeader:  "bytes=1500-2000",
+			size:         1000,
 			expectRanges: []httpRange{},
-			expectError: false,
+			expectError:  false,
 		},
 	}
 
@@ -218,7 +218,7 @@ func TestStreamDecryptedFile(t *testing.T) {
 			}
 
 			// Verify the content matches the expected range
-			expectedContent := testData[tt.start:tt.end+1]
+			expectedContent := testData[tt.start : tt.end+1]
 			if !bytes.Equal(buf.Bytes(), expectedContent) {
 				t.Errorf("streamDecryptedFile() content mismatch")
 			}

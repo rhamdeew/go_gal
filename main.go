@@ -68,9 +68,9 @@ var (
 		}
 		return []byte(salt)
 	}()
-	galleryDir   = filepath.Join(execDir, "gallery")
+	galleryDir    = filepath.Join(execDir, "gallery")
 	thumbnailsDir = filepath.Join(execDir, "thumbnails")
-	encryptedExt = ".enc" // Extension for encrypted files
+	encryptedExt  = ".enc" // Extension for encrypted files
 )
 
 // Initialize the cookie store with proper options
