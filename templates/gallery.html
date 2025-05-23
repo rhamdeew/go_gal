@@ -28,12 +28,12 @@
 
         <div class="gallery-controls">
             <div class="upload-section">
-                <h3>Upload Images</h3>
+                <h3>Upload Images & Videos</h3>
                 <div id="drop-area" class="drop-area">
-                    <p>Drag & drop images here or click to select files</p>
+                    <p>Drag & drop images and videos here or click to select files</p>
                     <form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data">
                         <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
-                        <input type="file" id="file-input" name="files" accept="image/*" multiple required style="display:none;">
+                        <input type="file" id="file-input" name="files" accept="image/*,video/*" multiple required style="display:none;">
                         <button type="button" id="select-files-btn" class="btn">Select Files</button>
                     </form>
                     <div id="file-list" class="file-list"></div>
@@ -70,8 +70,14 @@
                                 </form>
                             </div>
                         {{else}}
-                            <a href="javascript:void(0);" class="image-item" data-image="/view/{{.Path}}" data-detail="/view/{{.Path}}" data-name="{{.Name}}">
-                                <div class="image-preview" style="background-image: url('/view/{{.Path}}')"></div>
+                            <a href="javascript:void(0);" class="media-item" data-media="/view/{{.Path}}" data-detail="/view/{{.Path}}" data-name="{{.Name}}">
+                                <div class="media-preview" data-filename="{{.Name}}">
+                                    <div class="image-preview" style="background-image: url('/view/{{.Path}}')"></div>
+                                    <div class="video-preview" style="display: none;">
+                                        <div class="video-icon">🎬</div>
+                                        <div class="play-overlay">▶️</div>
+                                    </div>
+                                </div>
                                 <span>{{.Name}}</span>
                             </a>
                             <div class="item-actions">
@@ -92,17 +98,20 @@
         </div>
     </div>
 
-    <!-- Modal Window for Image Viewing -->
-    <div id="image-modal" class="modal">
+    <!-- Modal Window for Image and Video Viewing -->
+    <div id="media-modal" class="modal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 id="modal-image-name"></h2>
+                <h2 id="modal-media-name"></h2>
                 <a id="detail-link" href="#" target="_blank" class="btn btn-small">View Full Size</a>
                 <span class="close">&times;</span>
             </div>
             <div class="modal-body">
                 <button id="prev-btn" class="nav-btn prev-btn">&lt;</button>
-                <img id="modal-image" src="" alt="Image">
+                <img id="modal-image" src="" alt="Image" style="display: none;">
+                <video id="modal-video" controls style="display: none;" preload="metadata">
+                    <p>Your browser doesn't support HTML5 video.</p>
+                </video>
                 <button id="next-btn" class="nav-btn next-btn">&gt;</button>
             </div>
         </div>
@@ -208,6 +217,12 @@
                                 };
                             })(img);
                             reader.readAsDataURL(file);
+                        } else if (file.type.startsWith('video/')) {
+                            // Create preview for video files
+                            const videoPreview = document.createElement('div');
+                            videoPreview.className = 'video-preview-upload';
+                            videoPreview.innerHTML = '<div class="video-icon">🎬</div>';
+                            fileItem.appendChild(videoPreview);
                         }
 
                         const fileInfo = document.createElement('div');
@@ -223,29 +238,65 @@
                 }
             }
 
-            // Modal Image Gallery
-            const modal = document.getElementById('image-modal');
+            // Initialize media previews and detect video files
+            function initializeMediaPreviews() {
+                const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.3gp', '.flv', '.wmv', '.m4v'];
+
+                document.querySelectorAll('.media-preview').forEach(preview => {
+                    const filename = preview.getAttribute('data-filename').toLowerCase();
+                    const isVideo = videoExtensions.some(ext => filename.endsWith(ext));
+
+                    const imagePreview = preview.querySelector('.image-preview');
+                    const videoPreview = preview.querySelector('.video-preview');
+
+                    if (isVideo) {
+                        imagePreview.style.display = 'none';
+                        videoPreview.style.display = 'flex';
+                        preview.closest('.media-item').classList.add('video-item');
+                    } else {
+                        imagePreview.style.display = 'block';
+                        videoPreview.style.display = 'none';
+                        preview.closest('.media-item').classList.add('image-item');
+                    }
+                });
+            }
+
+            // Call initialization
+            initializeMediaPreviews();
+
+            // Modal Image and Video Gallery
+            const modal = document.getElementById('media-modal');
             const modalImg = document.getElementById('modal-image');
-            const modalName = document.getElementById('modal-image-name');
+            const modalVideo = document.getElementById('modal-video');
+            const modalName = document.getElementById('modal-media-name');
             const detailLink = document.getElementById('detail-link');
             const prevBtn = document.getElementById('prev-btn');
             const nextBtn = document.getElementById('next-btn');
             const closeBtn = document.querySelector('.close');
-            const imageItems = document.querySelectorAll('.image-item');
 
             let currentIndex = 0;
-            const images = Array.from(imageItems).map(item => ({
-                src: item.getAttribute('data-image'),
-                detail: item.getAttribute('data-detail'),
-                name: item.getAttribute('data-name')
-            }));
+            const mediaItems = [];
 
-            // Open the modal and show the clicked image
-            imageItems.forEach((item, index) => {
+            // Collect all media items
+            document.querySelectorAll('.media-item').forEach(item => {
+                const filename = item.getAttribute('data-name').toLowerCase();
+                const videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm', '.3gp', '.flv', '.wmv', '.m4v'];
+                const isVideo = videoExtensions.some(ext => filename.endsWith(ext));
+
+                mediaItems.push({
+                    src: item.getAttribute('data-media'),
+                    detail: item.getAttribute('data-detail'),
+                    name: item.getAttribute('data-name'),
+                    type: isVideo ? 'video' : 'image'
+                });
+            });
+
+            // Open the modal and show the clicked media
+            document.querySelectorAll('.media-item').forEach((item, index) => {
                 item.addEventListener('click', function() {
                     modal.style.display = 'block';
                     currentIndex = index;
-                    showCurrentImage();
+                    showCurrentMedia();
                 });
             });
 
@@ -261,50 +312,63 @@
                 }
             });
 
-            // Navigate to previous image
-            prevBtn.addEventListener('click', showPrevImage);
+            // Navigate to previous media
+            prevBtn.addEventListener('click', showPrevMedia);
 
-            // Navigate to next image
-            nextBtn.addEventListener('click', showNextImage);
+            // Navigate to next media
+            nextBtn.addEventListener('click', showNextMedia);
 
             // Keyboard navigation
             document.addEventListener('keydown', function(event) {
                 if (modal.style.display === 'block') {
                     if (event.key === 'ArrowLeft') {
-                        showPrevImage();
+                        showPrevMedia();
                     } else if (event.key === 'ArrowRight') {
-                        showNextImage();
+                        showNextMedia();
                     } else if (event.key === 'Escape') {
                         modal.style.display = 'none';
                     }
                 }
             });
 
-            function showCurrentImage() {
-                if (images.length === 0) return;
+            function showCurrentMedia() {
+                if (mediaItems.length === 0) return;
 
-                const image = images[currentIndex];
-                modalImg.src = image.src;
-                modalName.textContent = image.name;
-                detailLink.href = image.detail;
+                const media = mediaItems[currentIndex];
+                modalName.textContent = media.name;
+                detailLink.href = media.detail;
 
-                // Show/hide navigation buttons based on available images
-                prevBtn.style.visibility = images.length > 1 ? 'visible' : 'hidden';
-                nextBtn.style.visibility = images.length > 1 ? 'visible' : 'hidden';
+                if (media.type === 'image') {
+                    // Show image, hide video
+                    modalImg.src = media.src;
+                    modalImg.style.display = 'block';
+                    modalVideo.style.display = 'none';
+                } else if (media.type === 'video') {
+                    // Show video, hide image
+                    modalVideo.src = media.src;
+                    modalVideo.style.display = 'block';
+                    modalImg.style.display = 'none';
+                    // Reset video to beginning when switching
+                    modalVideo.currentTime = 0;
+                }
+
+                // Show/hide navigation buttons based on available media
+                prevBtn.style.visibility = mediaItems.length > 1 ? 'visible' : 'hidden';
+                nextBtn.style.visibility = mediaItems.length > 1 ? 'visible' : 'hidden';
             }
 
-            function showPrevImage() {
-                if (images.length <= 1) return;
+            function showPrevMedia() {
+                if (mediaItems.length <= 1) return;
 
-                currentIndex = (currentIndex - 1 + images.length) % images.length;
-                showCurrentImage();
+                currentIndex = (currentIndex - 1 + mediaItems.length) % mediaItems.length;
+                showCurrentMedia();
             }
 
-            function showNextImage() {
-                if (images.length <= 1) return;
+            function showNextMedia() {
+                if (mediaItems.length <= 1) return;
 
-                currentIndex = (currentIndex + 1) % images.length;
-                showCurrentImage();
+                currentIndex = (currentIndex + 1) % mediaItems.length;
+                showCurrentMedia();
             }
         });
     </script>

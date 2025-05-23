@@ -16,10 +16,12 @@ A password-protected web gallery application written in Go. All folders and file
 - All folders and files are encrypted with your password
 - Files are decrypted on-the-fly when viewed
 - Create new folders with encrypted names
-- Upload images to your gallery
+- Upload images and videos to your gallery
+- Support for common video formats (MP4, MOV, AVI, MKV, WebM, 3GP, FLV, WMV, M4V)
+- Built-in video player with controls for viewing videos
 - Multi-file upload support with drag-and-drop interface
-- Image preview before uploading
-- Modern and responsive UI
+- Image and video preview before uploading
+- Modern and responsive UI with unified media gallery
 - No server-side password storage for enhanced security
 - HTTPS support with self-signed certificates
 
@@ -119,9 +121,9 @@ export GO_GAL_SALT="your-random-secure-salt"
 4. You can now:
    - Browse your encrypted gallery
    - Create new directories
-   - Upload images by selecting files or using drag-and-drop
-   - See image previews before uploading
-   - View images by clicking on them
+   - Upload images and videos by selecting files or using drag-and-drop
+   - See image and video previews before uploading
+   - View images and videos by clicking on them
 
 ## Important Notes
 

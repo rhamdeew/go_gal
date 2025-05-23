@@ -5,6 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.0.12] - 2025-01-23
+
+### Added
+- Complete video support with HTML5 video player
+- Support for major video formats: MP4, MOV, AVI, MKV, WebM, 3GP, FLV, WMV, M4V
+- Optimized support for iPhone (MOV, M4V) and Android (MP4, 3GP) video formats
+- Built-in video player with standard controls (play, pause, seek, volume, fullscreen)
+- Video file detection and preview during upload
+- Unified media gallery interface for both images and videos
+- Video thumbnails with distinctive video icons and play overlays
+- Seamless navigation between images and videos in modal viewer
+- Responsive video player that scales properly on all devices
+- Video file preview functionality during drag-and-drop upload
+
+### Changed
+- Updated upload interface to accept both image and video files
+- Enhanced modal viewer to support both images and videos with unified navigation
+- Improved UI with better visual distinction between image and video files
+- Updated documentation to reflect video support capabilities
+
+### Fixed
+- Proper MIME type handling for all supported video formats
+- Consistent styling between image and video previews
+- Mobile-responsive video playback experience
+
 ## [0.0.11] - 2025-06-10
 
 ### Fixed
