@@ -57,11 +57,13 @@ jobs:
           cp -r static/* release_dir/static/
           cp "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" release_dir/
 
+          # Copy install and uninstall scripts to all releases
+          cp install.sh release_dir/
+          cp uninstall.sh release_dir/
+
           # Copy systemd service file for Linux builds
           if [ "${{ matrix.goos }}" = "linux" ]; then
             cp go_gal.service release_dir/
-            cp install.sh release_dir/
-            cp uninstall.sh release_dir/
           fi
 
           # Create a zip archive
