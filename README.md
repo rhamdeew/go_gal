@@ -199,16 +199,16 @@ The application can be installed as a systemd service for automatic startup and 
 
 You can pass the following options to the installation script:
 
-| Option | Description | Default |
-|--------|-------------|---------|
-| `--dir=DIR` | Installation directory | `/opt/go_gal` |
-| `--port=PORT` | Port to listen on | `8080` |
-| `--host=HOST` | Host IP to bind to | `0.0.0.0` |
-| `--enable-ssl` | Enable SSL/TLS | Disabled |
-| `--cert=FILE` | SSL certificate file | `cert.pem` |
-| `--key=FILE` | SSL key file | `key.pem` |
+| Option              | Description                   | Default          |
+|---------------------|-------------------------------|------------------|
+| `--dir=DIR`         | Installation directory        | `/opt/go_gal`    |
+| `--port=PORT`       | Port to listen on             | `8080`           |
+| `--host=HOST`       | Host IP to bind to            | `0.0.0.0`        |
+| `--enable-ssl`      | Enable SSL/TLS                | Disabled         |
+| `--cert=FILE`       | SSL certificate file          | `cert.pem`       |
+| `--key=FILE`        | SSL key file                  | `key.pem`        |
 | `--session-key=KEY` | Custom session encryption key | Random generated |
-| `--salt=SALT` | Custom password hashing salt | Random generated |
+| `--salt=SALT`       | Custom password hashing salt  | Random generated |
 
 Example:
 ```
@@ -255,4 +255,60 @@ After making changes, reload the systemd configuration:
 ```
 sudo systemctl daemon-reload
 sudo systemctl restart go_gal
+```
+
+### Updating the Application
+
+To update an existing installation to a new version:
+
+1. **Stop the service:**
+   ```
+   sudo systemctl stop go_gal
+   ```
+
+2. **Backup current encryption keys (important!):**
+
+   Before updating, extract the current session key and salt from the service file to preserve access to your encrypted data:
+   ```bash
+   # View current keys
+   sudo grep -E "GO_GAL_(SESSION_KEY|SALT)" /etc/systemd/system/go_gal.service
+   ```
+
+   Note down the values for `GO_GAL_SESSION_KEY` and `GO_GAL_SALT`.
+
+3. **Download the new version** from the [Releases page](https://github.com/rhamdeew/go_gal/releases).
+
+4. **Run the installer with your existing keys:**
+   ```bash
+   sudo ./install.sh \
+     --session-key="your_existing_session_key" \
+     --salt="your_existing_salt" \
+     [other_options_as_needed]
+   ```
+
+5. **Start the service:**
+   ```
+   sudo systemctl start go_gal
+   ```
+
+**⚠️ Important Update Notes:**
+
+- **Always preserve your session key and salt** - New random values will be generated if not specified, which could make your encrypted data inaccessible
+- The installer will overwrite the binary, templates, and static files with the new version
+- Your gallery data in `/opt/go_gal/gallery` (or custom directory) will be preserved
+- SSL certificates will be preserved if they exist
+- The systemd service configuration will be updated
+
+**Quick Update Example:**
+```bash
+# Stop service
+sudo systemctl stop go_gal
+
+# Update with preserved keys (replace with your actual values)
+sudo ./install.sh \
+  --session-key="abc123xyz789" \
+  --salt="def456uvw"
+
+# Start service
+sudo systemctl start go_gal
 ```
