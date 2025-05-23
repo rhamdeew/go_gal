@@ -20,8 +20,8 @@ func TestBuildBreadcrumbs(t *testing.T) {
 	}
 
 	tests := []struct {
-		name         string
-		currentPath  string
+		name              string
+		currentPath       string
 		expectBreadcrumbs []Breadcrumb
 	}{
 		{
@@ -136,7 +136,7 @@ func TestGenerateVideoThumbnail(t *testing.T) {
 	if err != nil {
 		errorMessage := err.Error()
 		if errorMessage != "ffmpeg not found in PATH, cannot generate video thumbnails" &&
-		   !strings.Contains(errorMessage, "ffmpeg failed") {
+			!strings.Contains(errorMessage, "ffmpeg failed") {
 			t.Errorf("generateVideoThumbnail() error = %v, want ffmpeg related error", err)
 		}
 	}
@@ -144,8 +144,8 @@ func TestGenerateVideoThumbnail(t *testing.T) {
 
 func TestGeneratePlaceholderImageExtended(t *testing.T) {
 	tests := []struct {
-		name     string
-		filename string
+		name        string
+		filename    string
 		expectBytes bool
 	}{
 		{
@@ -258,24 +258,24 @@ func TestDecryptFileNameCorruptedData(t *testing.T) {
 	passwordHash := hashPassword("testpassword")
 
 	tests := []struct {
-		name        string
+		name         string
 		encryptedHex string
-		expectError bool
+		expectError  bool
 	}{
 		{
-			name:        "Invalid hex string",
+			name:         "Invalid hex string",
 			encryptedHex: "invalid-hex-string",
-			expectError: true,
+			expectError:  true,
 		},
 		{
-			name:        "Too short data",
+			name:         "Too short data",
 			encryptedHex: "1234",
-			expectError: true,
+			expectError:  true,
 		},
 		{
-			name:        "Empty string",
+			name:         "Empty string",
 			encryptedHex: "",
-			expectError: true,
+			expectError:  true,
 		},
 	}
 

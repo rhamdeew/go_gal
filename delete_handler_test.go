@@ -14,48 +14,48 @@ func TestDeleteHandler(t *testing.T) {
 	passwordHash := hashPassword("testpassword")
 
 	tests := []struct {
-		name         string
-		path         string
-		currentDir   string
-		createFile   bool
-		createDir    bool
-		expectStatus int
+		name           string
+		path           string
+		currentDir     string
+		createFile     bool
+		createDir      bool
+		expectStatus   int
 		expectRedirect string
 	}{
 		{
-			name:         "Delete file",
-			path:         "test_file",
-			currentDir:   "/",
-			createFile:   true,
-			createDir:    false,
-			expectStatus: http.StatusSeeOther,
+			name:           "Delete file",
+			path:           "test_file",
+			currentDir:     "/",
+			createFile:     true,
+			createDir:      false,
+			expectStatus:   http.StatusSeeOther,
 			expectRedirect: "/gallery/",
 		},
 		{
-			name:         "Delete directory",
-			path:         "test_dir",
-			currentDir:   "/",
-			createFile:   false,
-			createDir:    true,
-			expectStatus: http.StatusSeeOther,
+			name:           "Delete directory",
+			path:           "test_dir",
+			currentDir:     "/",
+			createFile:     false,
+			createDir:      true,
+			expectStatus:   http.StatusSeeOther,
 			expectRedirect: "/gallery/",
 		},
 		{
-			name:         "Delete from subdirectory",
-			path:         "subdir/test_file",
-			currentDir:   "/subdir",
-			createFile:   true,
-			createDir:    false,
-			expectStatus: http.StatusSeeOther,
+			name:           "Delete from subdirectory",
+			path:           "subdir/test_file",
+			currentDir:     "/subdir",
+			createFile:     true,
+			createDir:      false,
+			expectStatus:   http.StatusSeeOther,
 			expectRedirect: "/gallery/subdir/",
 		},
 		{
-			name:         "Delete non-existent file",
-			path:         "nonexistent",
-			currentDir:   "/",
-			createFile:   false,
-			createDir:    false,
-			expectStatus: http.StatusNotFound,
+			name:           "Delete non-existent file",
+			path:           "nonexistent",
+			currentDir:     "/",
+			createFile:     false,
+			createDir:      false,
+			expectStatus:   http.StatusNotFound,
 			expectRedirect: "",
 		},
 	}
