@@ -214,6 +214,7 @@ h1, h2, h3 {
     top: 10px;
     right: 10px;
     display: none;
+    z-index: 10;
 }
 
 .gallery-item:hover .item-actions {
@@ -230,6 +231,8 @@ h1, h2, h3 {
     padding: 5px;
     border-radius: 50%;
     background-color: rgba(255, 255, 255, 0.8);
+    position: relative;
+    z-index: 15;
 }
 
 .delete-btn:hover {
@@ -246,6 +249,7 @@ h1, h2, h3 {
 
 .media-preview {
     position: relative;
+    overflow: hidden;
 }
 
 .folder-icon {
@@ -569,4 +573,10 @@ h1, h2, h3 {
     background-size: cover !important;
     background-position: center !important;
     background-repeat: no-repeat !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 1;
 }
