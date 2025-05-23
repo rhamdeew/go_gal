@@ -1188,30 +1188,133 @@ func thumbnailHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Check if thumbnail exists
 	if _, err := os.Stat(thumbnailPath); os.IsNotExist(err) {
-		// If thumbnail doesn't exist, try to determine the original filename and generate a placeholder
-		// We need to decrypt the filename to determine if it's a video or image
+		// Thumbnail doesn't exist, try to generate it from the original file
+		originalFilePath := filepath.Join(galleryDir, cleanPath)
+		if !strings.HasSuffix(originalFilePath, encryptedExt) {
+			originalFilePath += encryptedExt
+		}
+
+		// Check if original file exists
+		if _, err := os.Stat(originalFilePath); os.IsNotExist(err) {
+			// Original file doesn't exist, send a generic placeholder
+			encFileName := filepath.Base(strings.TrimSuffix(cleanPath, encryptedExt))
+			originalFileName, decryptErr := decryptFileName(encFileName, passwordHash)
+
+			var placeholderData []byte
+			if decryptErr != nil {
+				placeholderData = generatePlaceholderImage("unknown.file")
+			} else {
+				placeholderData = generatePlaceholderImage(originalFileName)
+			}
+
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=300")
+			if _, err := w.Write(placeholderData); err != nil {
+				log.Printf("Error writing placeholder response: %v", err)
+			}
+			return
+		}
+
+		// Decrypt the original filename to determine file type
 		encFileName := filepath.Base(strings.TrimSuffix(cleanPath, encryptedExt))
-		originalFileName, decryptErr := decryptFileName(encFileName, passwordHash)
+		originalFileName, err := decryptFileName(encFileName, passwordHash)
+		if err != nil {
+			// Can't decrypt filename, check for password error
+			if strings.Contains(err.Error(), "incorrect password") {
+				session.Values["authenticated"] = false
+				session.Values["password_hash"] = ""
+				if err := session.Save(r, w); err != nil {
+					log.Printf("Error saving session: %v", err)
+				}
+				http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+				return
+			}
 
-		var placeholderData []byte
-		if decryptErr != nil {
-			// If we can't decrypt the filename, generate a generic placeholder
-			placeholderData = generatePlaceholderImage("unknown.file")
+			// Generate placeholder for unknown file
+			placeholderData := generatePlaceholderImage("unknown.file")
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=300")
+			if _, err := w.Write(placeholderData); err != nil {
+				log.Printf("Error writing placeholder response: %v", err)
+			}
+			return
+		}
+
+		// Check if this is an image or video file that we can generate a thumbnail for
+		if isImageFile(originalFileName) || isVideoFile(originalFileName) {
+			// Try to decrypt and read the original file
+			originalData, err := decryptFile(originalFilePath, passwordHash)
+			if err != nil {
+				// Check if this is a password error
+				if strings.Contains(err.Error(), "incorrect password") {
+					session.Values["authenticated"] = false
+					session.Values["password_hash"] = ""
+					if err := session.Save(r, w); err != nil {
+						log.Printf("Error saving session: %v", err)
+					}
+					http.Redirect(w, r, "/?error=incorrect_password", http.StatusSeeOther)
+					return
+				}
+
+				log.Printf("Warning: Failed to decrypt original file for thumbnail generation %s: %v", originalFileName, err)
+				// Generate placeholder instead
+				placeholderData := generatePlaceholderImage(originalFileName)
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				if _, err := w.Write(placeholderData); err != nil {
+					log.Printf("Error writing placeholder response: %v", err)
+				}
+				return
+			}
+
+			// Generate thumbnail from original data
+			thumbnailData, err := createThumbnail(originalData, originalFileName, passwordHash)
+			if err != nil {
+				log.Printf("Warning: Failed to generate thumbnail for existing file %s: %v", originalFileName, err)
+				// Generate placeholder instead
+				placeholderData := generatePlaceholderImage(originalFileName)
+				w.Header().Set("Content-Type", "image/jpeg")
+				w.Header().Set("Cache-Control", "public, max-age=300")
+				if _, err := w.Write(placeholderData); err != nil {
+					log.Printf("Error writing placeholder response: %v", err)
+				}
+				return
+			}
+
+			// Save the generated thumbnail for future use
+			thumbnailDir := filepath.Dir(thumbnailPath)
+			err = os.MkdirAll(thumbnailDir, 0750)
+			if err != nil {
+				log.Printf("Warning: Failed to create thumbnail directory: %v", err)
+			} else {
+				err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
+				if err != nil {
+					log.Printf("Warning: Failed to save generated thumbnail for %s: %v", originalFileName, err)
+				} else {
+					log.Printf("Generated and saved thumbnail for existing file: %s", originalFileName)
+				}
+			}
+
+			// Serve the generated thumbnail
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=3600")
+			if _, err := w.Write(thumbnailData); err != nil {
+				log.Printf("Error writing thumbnail response: %v", err)
+			}
+			return
 		} else {
-			// Generate appropriate placeholder based on file type
-			placeholderData = generatePlaceholderImage(originalFileName)
+			// Not an image or video file, generate placeholder
+			placeholderData := generatePlaceholderImage(originalFileName)
+			w.Header().Set("Content-Type", "image/jpeg")
+			w.Header().Set("Cache-Control", "public, max-age=300")
+			if _, err := w.Write(placeholderData); err != nil {
+				log.Printf("Error writing placeholder response: %v", err)
+			}
+			return
 		}
-
-		// Send the placeholder as JPEG
-		w.Header().Set("Content-Type", "image/jpeg")
-		w.Header().Set("Cache-Control", "public, max-age=300") // Cache for 5 minutes
-		if _, err := w.Write(placeholderData); err != nil {
-			log.Printf("Error writing placeholder response: %v", err)
-		}
-		return
 	}
 
-	// Decrypt and serve the thumbnail
+	// Decrypt and serve the existing thumbnail
 	decryptedData, err := decryptFile(thumbnailPath, passwordHash)
 	if err != nil {
 		// Check if this is a password error
