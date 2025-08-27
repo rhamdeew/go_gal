@@ -1371,8 +1371,14 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		currentDir = "/"
 	}
 
+	// Check for obvious path traversal attempts before sanitization
+	if strings.Contains(currentDir, "..") {
+		http.Error(w, "Invalid upload directory", http.StatusBadRequest)
+		return
+	}
+
 	// Sanitize the path to prevent directory traversal
-	cleanDir := filepath.Clean(currentDir)
+	cleanDir := filepath.FromSlash(filepath.Clean("/" + strings.Trim(currentDir, "/")))
 	cleanDir = strings.Replace(cleanDir, "\\", "/", -1) // Normalize backslashes
 	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
 		cleanDir = cleanDir[1:] // Remove leading slash for proper joining
@@ -1519,18 +1525,8 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Construct proper redirect path
-	redirectPath := "/gallery/"
-	if cleanDir != "/" {
-		// Handle subdirectory path properly
-		// Strip any leading slash from cleanDir to avoid double slashes
-		redirectDir := strings.TrimPrefix(cleanDir, "/")
-		redirectPath = "/gallery/" + redirectDir
-		// Ensure the path ends with a slash for directories
-		if !strings.HasSuffix(redirectPath, "/") {
-			redirectPath += "/"
-		}
-	}
+	// Construct proper redirect path using safe validation
+	redirectPath := validateRedirectPath(cleanDir)
 
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
 }
@@ -1569,8 +1565,14 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Check for obvious path traversal attempts before sanitization
+	if strings.Contains(currentDir, "..") {
+		http.Error(w, "Invalid directory path", http.StatusBadRequest)
+		return
+	}
+
 	// Sanitize the directory path to prevent directory traversal
-	cleanDir := filepath.Clean(currentDir)
+	cleanDir := filepath.FromSlash(filepath.Clean("/" + strings.Trim(currentDir, "/")))
 	cleanDir = strings.Replace(cleanDir, "\\", "/", -1) // Normalize backslashes
 	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
 		cleanDir = cleanDir[1:] // Remove leading slash for proper joining
@@ -1613,18 +1615,8 @@ func createDirHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Construct proper redirect path
-	redirectPath := "/gallery/"
-	if cleanDir != "/" {
-		// Handle subdirectory path properly
-		// Strip any leading slash from cleanDir to avoid double slashes
-		redirectDir := strings.TrimPrefix(cleanDir, "/")
-		redirectPath = "/gallery/" + redirectDir
-		// Ensure the path ends with a slash for directories
-		if !strings.HasSuffix(redirectPath, "/") {
-			redirectPath += "/"
-		}
-	}
+	// Construct proper redirect path using safe validation
+	redirectPath := validateRedirectPath(cleanDir)
 
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
 }
@@ -1657,15 +1649,21 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 		currentDir = "/"
 	}
 
+	// Check for obvious path traversal attempts before sanitization
+	if strings.Contains(itemPath, "..") || strings.Contains(currentDir, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
 	// Sanitize the item path to prevent directory traversal
-	cleanItemPath := filepath.Clean(itemPath)
+	cleanItemPath := filepath.FromSlash(filepath.Clean("/" + strings.Trim(itemPath, "/")))
 	cleanItemPath = strings.Replace(cleanItemPath, "\\", "/", -1) // Normalize backslashes
 	if cleanItemPath != "/" && strings.HasPrefix(cleanItemPath, "/") {
 		cleanItemPath = cleanItemPath[1:] // Remove leading slash for proper joining
 	}
 
 	// Sanitize the current directory path
-	cleanDir := filepath.Clean(currentDir)
+	cleanDir := filepath.FromSlash(filepath.Clean("/" + strings.Trim(currentDir, "/")))
 	cleanDir = strings.Replace(cleanDir, "\\", "/", -1) // Normalize backslashes
 	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
 		cleanDir = cleanDir[1:] // Remove leading slash for proper joining
@@ -1719,18 +1717,8 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Construct proper redirect path
-	redirectPath := "/gallery/"
-	if cleanDir != "/" {
-		// Handle subdirectory path properly
-		// Strip any leading slash from cleanDir to avoid double slashes
-		redirectDir := strings.TrimPrefix(cleanDir, "/")
-		redirectPath = "/gallery/" + redirectDir
-		// Ensure the path ends with a slash for directories
-		if !strings.HasSuffix(redirectPath, "/") {
-			redirectPath += "/"
-		}
-	}
+	// Construct proper redirect path using safe validation
+	redirectPath := validateRedirectPath(cleanDir)
 
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
 }
@@ -1752,6 +1740,28 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// validateRedirectPath ensures redirect paths stay within the application's gallery structure
+func validateRedirectPath(cleanDir string) string {
+	// Always redirect to gallery paths only
+	redirectPath := "/gallery/"
+	if cleanDir != "/" && cleanDir != "" {
+		// Validate that cleanDir doesn't contain any suspicious patterns
+		if strings.Contains(cleanDir, "..") || strings.HasPrefix(cleanDir, "/") {
+			// Suspicious path detected, redirect to root gallery
+			return "/gallery/"
+		}
+		
+		// Strip any leading slash from cleanDir to avoid double slashes
+		redirectDir := strings.TrimPrefix(cleanDir, "/")
+		redirectPath = "/gallery/" + redirectDir
+		// Ensure the path ends with a slash for directories
+		if !strings.HasSuffix(redirectPath, "/") {
+			redirectPath += "/"
+		}
+	}
+	return redirectPath
 }
 
 // hashPassword creates a secure hash from a password
