@@ -1,4 +1,4 @@
-module go_gal
+module github.com/rhamdeew/go_gal
 
 go 1.23
 
