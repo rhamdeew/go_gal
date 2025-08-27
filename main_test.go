@@ -32,17 +32,23 @@ func TestMain(m *testing.M) {
 func setup() {
 	// Create a temporary test gallery directory
 	galleryDir = "test_gallery"
+	thumbnailsDir = "test_thumbnails"
 	if _, err := os.Stat(galleryDir); os.IsNotExist(err) {
 		os.MkdirAll(galleryDir, 0755)
+	}
+	if _, err := os.Stat(thumbnailsDir); os.IsNotExist(err) {
+		os.MkdirAll(thumbnailsDir, 0755)
 	}
 }
 
 func teardown() {
-	// Remove test gallery directory
+	// Remove test gallery and thumbnails directories
 	os.RemoveAll(galleryDir)
+	os.RemoveAll(thumbnailsDir)
 }
 
 func TestHashPassword(t *testing.T) {
+	t.Parallel()
 	password := "testpassword"
 	hash := hashPassword(password)
 
@@ -65,6 +71,7 @@ func TestHashPassword(t *testing.T) {
 }
 
 func TestCreateAESCipher(t *testing.T) {
+	t.Parallel()
 	passwordHash := hashPassword("testpassword")
 
 	cipher, err := createAESCipher(passwordHash)
@@ -83,6 +90,7 @@ func TestCreateAESCipher(t *testing.T) {
 }
 
 func TestEncryptDecryptFileName(t *testing.T) {
+	t.Parallel()
 	testCases := []string{
 		"test.txt",
 		"folder/subfolder/file.jpg",
@@ -246,6 +254,7 @@ func TestGalleryHandler(t *testing.T) {
 }
 
 func TestGeneratePlaceholderImage(t *testing.T) {
+	t.Parallel()
 	// Test video placeholder
 	videoPlaceholder := generatePlaceholderImage("test_video.mp4")
 	if len(videoPlaceholder) == 0 {

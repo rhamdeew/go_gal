@@ -8,6 +8,7 @@ import (
 )
 
 func TestEncryptAndSaveFileFunctions(t *testing.T) {
+	t.Parallel()
 	// Create a temporary test file path
 	testPath := filepath.Join(galleryDir, "test_encrypt_file.txt"+encryptedExt)
 
@@ -51,6 +52,7 @@ func TestEncryptAndSaveFileFunctions(t *testing.T) {
 }
 
 func TestEncryptAndSaveFileErrors(t *testing.T) {
+	t.Parallel()
 	// Test with invalid path
 	invalidPath := filepath.Join("/nonexistent/directory", "test.enc")
 	passwordHash := hashPassword("testpassword")

@@ -36,6 +36,16 @@ go test -v ./...
 # Run tests with coverage report
 make test-coverage
 go tool cover -html=coverage.out  # View coverage in browser
+
+# Run benchmark tests for performance analysis
+go test -bench=. -benchmem
+
+# Run specific test patterns
+go test -run=TestCrypto
+go test -run=TestHandler
+
+# Run tests in parallel (faster execution)
+go test -parallel=4
 ```
 
 ### Installation and Deployment
@@ -111,12 +121,28 @@ The application automatically generates 200x200 pixel thumbnails for performance
 - `golang.org/x/image/webp` - WebP image format support
 
 ### Testing Approach
-The codebase includes comprehensive tests in separate `*_test.go` files covering:
-- Encryption/decryption functionality
+The codebase includes comprehensive tests in separate `*_test.go` files following Go best practices:
+
+**Test Organization:**
+- 76 test functions across 18 test files (~4,200 lines of test code)
+- Tests use `t.Parallel()` for faster execution where safe
+- Table-driven tests for comprehensive edge case coverage
+- Helper functions marked with `t.Helper()` for clean error reporting
+- Extensive use of `t.Run()` subtests for organized testing
+
+**Coverage Areas:**
+- Encryption/decryption functionality with benchmark tests
 - HTTP handlers and routing
 - File operations and integrity verification
 - SSL certificate generation
 - Error conditions and edge cases
+- Performance benchmarks for crypto operations
+
+**Benchmark Tests:**
+- `BenchmarkHashPassword` - Password hashing performance
+- `BenchmarkCreateAESCipher` - Cipher creation performance  
+- `BenchmarkEncryptDecryptData` - File encryption/decryption performance
+- `BenchmarkEncryptDecryptFileName` - Filename encryption performance
 
 ### FFmpeg Integration
 FFmpeg is used for video thumbnail generation but is optional:

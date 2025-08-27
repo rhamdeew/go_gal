@@ -10,6 +10,7 @@ import (
 )
 
 func TestFileHMACVerification(t *testing.T) {
+	t.Parallel()
 	// Ensure gallery directory exists for tests
 	if _, err := os.Stat(galleryDir); os.IsNotExist(err) {
 		err = os.MkdirAll(galleryDir, 0755)
@@ -85,6 +86,7 @@ func TestFileHMACVerification(t *testing.T) {
 }
 
 func TestHMACWithWrongPassword(t *testing.T) {
+	t.Parallel()
 	// Create a temporary test file path
 	testPath := filepath.Join(galleryDir, "test_hmac_wrong_pw.txt"+encryptedExt)
 	// Clean up at the end
@@ -111,6 +113,7 @@ func TestHMACWithWrongPassword(t *testing.T) {
 }
 
 func TestHMACCalculation(t *testing.T) {
+	t.Parallel()
 	// Verify that our HMAC calculation matches the expected algorithm
 	testData := []byte("Test data for HMAC calculation")
 	passwordHash := "0123456789abcdef0123456789abcdef"

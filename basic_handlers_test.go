@@ -6,58 +6,75 @@ import (
 	"testing"
 )
 
-func TestIndexHandler(t *testing.T) {
-	// Test case: not authenticated
-	req1, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rr1 := httptest.NewRecorder()
-	handler := http.HandlerFunc(indexHandler)
-
-	handler.ServeHTTP(rr1, req1)
-
-	// Should return OK with login page
-	if status := rr1.Code; status != http.StatusOK {
-		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
-	}
-
-	// Test case: authenticated
-	req2, err := http.NewRequest("GET", "/", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// Create a session
-	rr2 := httptest.NewRecorder()
-	session, _ := store.Get(req2, "gallery-session")
+// Helper function to create authenticated session
+func createAuthenticatedSession(t *testing.T, req *http.Request, password string) *httptest.ResponseRecorder {
+	t.Helper()
+	rr := httptest.NewRecorder()
+	session, _ := store.Get(req, "gallery-session")
 	session.Values["authenticated"] = true
-	session.Values["password_hash"] = hashPassword("testpassword")
-	err = session.Save(req2, rr2)
+	session.Values["password_hash"] = hashPassword(password)
+	err := session.Save(req, rr)
 	if err != nil {
 		t.Fatalf("Failed to save session: %v", err)
 	}
+	return rr
+}
 
-	// Add the session cookie to the request
-	req2.Header.Add("Cookie", rr2.Header().Get("Set-Cookie"))
+func TestIndexHandler(t *testing.T) {
+	t.Parallel()
 
-	// Reset the response recorder
-	rr2 = httptest.NewRecorder()
-
-	handler.ServeHTTP(rr2, req2)
-
-	// Should redirect to gallery
-	if status := rr2.Code; status != http.StatusSeeOther {
-		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusSeeOther)
+	tests := []struct {
+		name             string
+		authenticated    bool
+		expectedStatus   int
+		expectedLocation string
+	}{
+		{
+			name:           "not authenticated",
+			authenticated:  false,
+			expectedStatus: http.StatusOK,
+		},
+		{
+			name:             "authenticated",
+			authenticated:    true,
+			expectedStatus:   http.StatusSeeOther,
+			expectedLocation: "/gallery/",
+		},
 	}
 
-	if loc := rr2.Header().Get("Location"); loc != "/gallery/" {
-		t.Errorf("handler returned wrong redirect location: got %v want %v", loc, "/gallery/")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := http.NewRequest("GET", "/", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			rr := httptest.NewRecorder()
+			handler := http.HandlerFunc(indexHandler)
+
+			if tt.authenticated {
+				// Create authenticated session
+				sessionRR := createAuthenticatedSession(t, req, "testpassword")
+				req.Header.Add("Cookie", sessionRR.Header().Get("Set-Cookie"))
+			}
+
+			handler.ServeHTTP(rr, req)
+
+			if status := rr.Code; status != tt.expectedStatus {
+				t.Errorf("handler returned wrong status code: got %v want %v", status, tt.expectedStatus)
+			}
+
+			if tt.expectedLocation != "" {
+				if location := rr.Header().Get("Location"); location != tt.expectedLocation {
+					t.Errorf("Expected redirect to %s, got %s", tt.expectedLocation, location)
+				}
+			}
+		})
 	}
 }
 
 func TestLogoutHandler(t *testing.T) {
+	t.Parallel()
 	// Create a request
 	req, err := http.NewRequest("GET", "/logout", nil)
 	if err != nil {
@@ -111,6 +128,7 @@ func TestLogoutHandler(t *testing.T) {
 }
 
 func TestCreateAESCipherEdgeCases(t *testing.T) {
+	t.Parallel()
 	// Test with short hash
 	shortHash := "abc123" // Too short
 	block, err := createAESCipher(shortHash)

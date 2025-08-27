@@ -15,6 +15,7 @@ import (
 )
 
 func TestGenerateSelfSignedCert(t *testing.T) {
+	t.Parallel()
 	// Create temporary files for testing
 	certPath := filepath.Join(galleryDir, "test_cert.pem")
 	keyPath := filepath.Join(galleryDir, "test_key.pem")
@@ -60,6 +61,7 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 }
 
 func TestAESEncryptionDecryption(t *testing.T) {
+	t.Parallel()
 	// Generate a password hash
 	passwordHash := hashPassword("test_password")
 
@@ -95,6 +97,7 @@ func TestAESEncryptionDecryption(t *testing.T) {
 }
 
 func TestHashPasswordAlgorithm(t *testing.T) {
+	t.Parallel()
 	// Test the internal implementation of hashPassword to ensure it uses SHA-256
 	password := "test_password"
 
@@ -113,6 +116,7 @@ func TestHashPasswordAlgorithm(t *testing.T) {
 }
 
 func TestEncryptionIdempotence(t *testing.T) {
+	t.Parallel()
 	// Test to ensure that consecutive encryptions with the same password produce different ciphertexts
 	// (due to random IV), but decryption still works correctly
 
@@ -194,4 +198,87 @@ func decryptData(data []byte, passwordHash string) ([]byte, error) {
 	stream.XORKeyStream(decrypted, data[aes.BlockSize:])
 
 	return decrypted, nil
+}
+
+// Benchmark tests for performance-critical crypto operations
+
+func BenchmarkHashPassword(b *testing.B) {
+	password := "testpassword123"
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		hashPassword(password)
+	}
+}
+
+func BenchmarkCreateAESCipher(b *testing.B) {
+	passwordHash := hashPassword("testpassword123")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, err := createAESCipher(passwordHash)
+		if err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkEncryptDecryptData(b *testing.B) {
+	testData := []byte("This is a test string for encryption benchmarking. It should be reasonably long to get meaningful performance numbers.")
+	passwordHash := hashPassword("testpassword123")
+
+	b.Run("Encrypt", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := encryptData(testData, passwordHash)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	// Pre-encrypt data for decrypt benchmark
+	encryptedData, err := encryptData(testData, passwordHash)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("Decrypt", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := decryptData(encryptedData, passwordHash)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+}
+
+func BenchmarkEncryptDecryptFileName(b *testing.B) {
+	filename := "test_file_with_long_name_for_benchmarking.jpg"
+	passwordHash := hashPassword("testpassword123")
+
+	b.Run("EncryptFileName", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := encryptFileName(filename, passwordHash)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
+
+	// Pre-encrypt filename for decrypt benchmark
+	encryptedName, err := encryptFileName(filename, passwordHash)
+	if err != nil {
+		b.Fatal(err)
+	}
+
+	b.Run("DecryptFileName", func(b *testing.B) {
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			_, err := decryptFileName(encryptedName, passwordHash)
+			if err != nil {
+				b.Fatal(err)
+			}
+		}
+	})
 }
