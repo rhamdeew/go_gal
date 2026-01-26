@@ -1058,7 +1058,7 @@ func getDecryptedFileSize(filePath, passwordHash string) (int64, error) {
 	return encryptedSize - 56, nil
 }
 
-// streamDecryptedFile streams a portion of the decrypted file
+// streamDecryptedFile streams a portion of the decrypted file with memory-efficient HMAC verification
 func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end int64) error {
 	// Open the encrypted file
 	f, err := os.Open(filePath)
@@ -1089,8 +1089,7 @@ func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end 
 		return fmt.Errorf("file is corrupted (missing HMAC): %v", err)
 	}
 
-	// For Range requests, we need to verify the entire file's HMAC first
-	// This is necessary because we can't verify integrity of partial data
+	// Get file size
 	fileInfo, err := f.Stat()
 	if err != nil {
 		return err
@@ -1100,24 +1099,47 @@ func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end 
 		return fmt.Errorf("file is corrupted (no encrypted data)")
 	}
 
-	// Read all encrypted data for HMAC verification
-	encryptedData := make([]byte, encryptedSize)
-	if _, err := io.ReadFull(f, encryptedData); err != nil {
-		return fmt.Errorf("file is corrupted (missing encrypted data): %v", err)
+	// PASS 1: Verify HMAC using streaming (memory efficient)
+	// Read file in chunks to avoid loading entire file into memory
+	chunkSize := int64(64 * 1024) // 64KB chunks - balance between memory and performance
+	h := hmac.New(sha256.New, []byte(passwordHash))
+	chunk := make([]byte, chunkSize)
+	bytesRemaining := encryptedSize
+
+	for bytesRemaining > 0 {
+		// Calculate how much to read this iteration
+		bytesToRead := chunkSize
+		if bytesRemaining < chunkSize {
+			bytesToRead = bytesRemaining
+		}
+
+		// Read chunk
+		n, err := io.ReadFull(f, chunk[:bytesToRead])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("file is corrupted (read error during HMAC verification): %v", err)
+		}
+
+		// Update HMAC with this chunk
+		h.Write(chunk[:n])
+		bytesRemaining -= int64(n)
+
+		// If we've read all data, stop
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
 	}
 
 	// Verify HMAC
-	h := hmac.New(sha256.New, []byte(passwordHash))
-	h.Write(encryptedData)
 	expectedMAC := h.Sum(nil)
 	if !hmac.Equal(mac, expectedMAC) {
 		return fmt.Errorf("decryption failed: incorrect password or tampered file")
 	}
 
-	// Create cipher for decryption
-	block, err := createAESCipher(passwordHash)
+	// PASS 2: Read encrypted data up to end position and decrypt
+	// We need to seek back to the start of encrypted data (after IV, HMAC size, and HMAC)
+	_, err = f.Seek(int64(aes.BlockSize)+8+int64(macSize), io.SeekStart)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to seek in file: %v", err)
 	}
 
 	// Calculate which part of the encrypted data we need to decrypt
@@ -1126,6 +1148,32 @@ func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end 
 	endByte := end + 1
 	if endByte > encryptedSize {
 		endByte = encryptedSize
+	}
+
+	// Read encrypted data up to end position in chunks
+	encryptedData := make([]byte, endByte)
+	bytesRead := int64(0)
+	for bytesRead < endByte {
+		bytesToRead := chunkSize
+		if remaining := endByte - bytesRead; remaining < chunkSize {
+			bytesToRead = remaining
+		}
+
+		n, err := io.ReadFull(f, encryptedData[bytesRead:bytesRead+bytesToRead])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("file is corrupted (read error during data extraction): %v", err)
+		}
+		bytesRead += int64(n)
+
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+
+	// Create cipher for decryption
+	block, err := createAESCipher(passwordHash)
+	if err != nil {
+		return err
 	}
 
 	// Decrypt the required portion
