@@ -180,8 +180,8 @@
             });
 
             // Handle upload button click
-            uploadBtn.addEventListener('click', () => {
-                uploadForm.submit();
+            uploadBtn.addEventListener('click', async () => {
+                await uploadFiles();
             });
 
             function preventDefaults(e) {
@@ -212,9 +212,12 @@
                     fileList.innerHTML = '';
                     uploadBtn.style.display = 'inline-block';
 
-                    Array.from(files).forEach(file => {
+                    Array.from(files).forEach((file, index) => {
                         const fileItem = document.createElement('div');
                         fileItem.className = 'file-item';
+                        fileItem.dataset.fileIndex = index;
+                        fileItem.dataset.fileName = file.name;
+                        fileItem.dataset.status = 'pending';
 
                         // Create preview for image files
                         if (file.type.startsWith('image/')) {
@@ -240,7 +243,17 @@
 
                         const fileInfo = document.createElement('div');
                         fileInfo.className = 'file-info';
-                        fileInfo.textContent = file.name;
+
+                        const fileName = document.createElement('div');
+                        fileName.className = 'file-name';
+                        fileName.textContent = file.name;
+                        fileInfo.appendChild(fileName);
+
+                        const fileStatus = document.createElement('div');
+                        fileStatus.className = 'file-status';
+                        fileStatus.textContent = 'Pending';
+                        fileInfo.appendChild(fileStatus);
+
                         fileItem.appendChild(fileInfo);
 
                         fileList.appendChild(fileItem);
@@ -248,6 +261,68 @@
                 } else {
                     fileList.innerHTML = '';
                     uploadBtn.style.display = 'none';
+                }
+            }
+
+            async function uploadFiles() {
+                const files = fileInput.files;
+                if (files.length === 0) return;
+
+                uploadBtn.disabled = true;
+                uploadBtn.textContent = 'Uploading...';
+
+                const fileItems = fileList.querySelectorAll('.file-item');
+                let successCount = 0;
+                let failCount = 0;
+
+                // Upload files one by one
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    const fileItem = fileList.querySelector(`[data-file-index="${i}"]`);
+                    const statusElement = fileItem.querySelector('.file-status');
+
+                    // Update status to uploading
+                    fileItem.dataset.status = 'uploading';
+                    statusElement.textContent = 'Uploading...';
+                    statusElement.className = 'file-status uploading';
+
+                    try {
+                        const formData = new FormData();
+                        formData.append('file', file);
+                        formData.append('currentDir', document.querySelector('input[name="currentDir"]').value);
+
+                        const response = await fetch('/upload', {
+                            method: 'POST',
+                            body: formData
+                        });
+
+                        if (response.ok) {
+                            // Update status to success
+                            fileItem.dataset.status = 'uploaded';
+                            statusElement.textContent = '✓ Uploaded';
+                            statusElement.className = 'file-status success';
+                            successCount++;
+                        } else {
+                            const errorText = await response.text();
+                            throw new Error(errorText || 'Upload failed');
+                        }
+                    } catch (error) {
+                        // Update status to error
+                        fileItem.dataset.status = 'error';
+                        statusElement.textContent = '✗ Failed: ' + (error.message || 'Unknown error');
+                        statusElement.className = 'file-status error';
+                        failCount++;
+                    }
+                }
+
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Upload Files';
+
+                // Reload page after all uploads complete if all succeeded
+                if (failCount === 0) {
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
                 }
             }
 

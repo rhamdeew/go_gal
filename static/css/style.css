@@ -314,6 +314,9 @@ h1, h2, h3 {
     overflow: hidden;
     position: relative;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
 }
 
 .file-preview {
@@ -330,6 +333,31 @@ h1, h2, h3 {
     overflow: hidden;
     text-overflow: ellipsis;
     padding: 0 5px;
+}
+
+.file-name {
+    font-weight: 500;
+    margin-bottom: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.file-status {
+    font-size: 0.85em;
+    color: #666;
+}
+
+.file-status.uploading {
+    color: #0070c9;
+}
+
+.file-status.success {
+    color: #28a745;
+    font-weight: 500;
+}
+
+.file-status.error {
+    color: #dc3545;
 }
 
 #upload-btn {
@@ -521,15 +549,15 @@ h1, h2, h3 {
 }
 
 .video-preview-upload {
-    width: 60px;
-    height: 60px;
+    width: 100%;
+    height: 80px;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    border-radius: 5px;
+    border-radius: 3px;
     display: flex;
     align-items: center;
     justify-content: center;
     color: white;
-    margin-right: 10px;
+    margin-bottom: 5px;
 }
 
 .video-preview-upload .video-icon {
