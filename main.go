@@ -263,9 +263,9 @@ func main() {
 			Addr:              serverAddr,
 			Handler:           r,
 			TLSConfig:         tlsConfig,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      15 * time.Second,
-			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Minute, // Allow enough time for large file uploads
+			WriteTimeout:      30 * time.Minute, // Allow enough time for large file downloads
+			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
 
@@ -276,9 +276,9 @@ func main() {
 		server := &http.Server{
 			Addr:              serverAddr,
 			Handler:           r,
-			ReadTimeout:       15 * time.Second,
-			WriteTimeout:      15 * time.Second,
-			ReadHeaderTimeout: 5 * time.Second,
+			ReadTimeout:       30 * time.Minute, // Allow enough time for large file uploads
+			WriteTimeout:      30 * time.Minute, // Allow enough time for large file downloads
+			ReadHeaderTimeout: 10 * time.Second,
 			IdleTimeout:       60 * time.Second,
 		}
 		log.Fatal(server.ListenAndServe())
@@ -1421,13 +1421,6 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		}
 		defer file.Close()
 
-		// Process the single file
-		fileData, err := io.ReadAll(file)
-		if err != nil {
-			http.Error(w, "Error reading file", http.StatusInternalServerError)
-			return
-		}
-
 		// Encrypt the filename
 		encFileName, err := encryptFileName(header.Filename, passwordHash)
 		if err != nil {
@@ -1435,77 +1428,25 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Encrypt and save the file
+		// Encrypt and save the file using streaming
 		encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
-		err = encryptAndSaveFile(fileData, encryptedPath, passwordHash)
+		err = encryptAndSaveFileStream(file, encryptedPath, passwordHash)
 		if err != nil {
 			http.Error(w, "Error saving encrypted file", http.StatusInternalServerError)
 			return
 		}
 
-		// Generate and save thumbnail if it's an image or video
-		if isImageFile(header.Filename) || isVideoFile(header.Filename) {
-			thumbnailData, err := createThumbnail(fileData, header.Filename, passwordHash)
-			if err != nil {
-				log.Printf("Warning: Failed to generate thumbnail for %s: %v", header.Filename, err)
-				// Generate placeholder thumbnail instead
-				placeholderData := generatePlaceholderImage(header.Filename)
-				thumbnailData = placeholderData
-			}
-
-			// Save encrypted thumbnail (either real thumbnail or placeholder)
-			thumbnailDir := filepath.Join(thumbnailsDir, cleanDir)
-			err = os.MkdirAll(thumbnailDir, 0750)
-			if err != nil {
-				log.Printf("Warning: Failed to create thumbnail directory: %v", err)
-			} else {
-				thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
-				err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
-				if err != nil {
-					log.Printf("Warning: Failed to save thumbnail for %s: %v", header.Filename, err)
-				}
-			}
-		}
-	} else {
-		// Process multiple files
-		for _, fileHeader := range files {
-			// Open the uploaded file
-			file, err := fileHeader.Open()
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Error opening file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
-				continue
-			}
-			defer file.Close()
-
-			// Read file data
+		// For thumbnails, we need to read the file (thumbnails are for small images/videos anyway)
+		// Seek back to start if possible, otherwise we'll skip thumbnail generation for large files
+		if seeker, ok := file.(io.Seeker); ok {
+			seeker.Seek(0, io.SeekStart)
 			fileData, err := io.ReadAll(file)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Error reading file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
-				continue
-			}
-
-			// Encrypt the filename
-			encFileName, err := encryptFileName(fileHeader.Filename, passwordHash)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Error encrypting filename %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
-				continue
-			}
-
-			// Encrypt and save the file
-			encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
-			err = encryptAndSaveFile(fileData, encryptedPath, passwordHash)
-			if err != nil {
-				http.Error(w, fmt.Sprintf("Error saving encrypted file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
-				continue
-			}
-
-			// Generate and save thumbnail if it's an image or video
-			if isImageFile(fileHeader.Filename) || isVideoFile(fileHeader.Filename) {
-				thumbnailData, err := createThumbnail(fileData, fileHeader.Filename, passwordHash)
+			if err == nil && (isImageFile(header.Filename) || isVideoFile(header.Filename)) {
+				thumbnailData, err := createThumbnail(fileData, header.Filename, passwordHash)
 				if err != nil {
-					log.Printf("Warning: Failed to generate thumbnail for %s: %v", fileHeader.Filename, err)
+					log.Printf("Warning: Failed to generate thumbnail for %s: %v", header.Filename, err)
 					// Generate placeholder thumbnail instead
-					placeholderData := generatePlaceholderImage(fileHeader.Filename)
+					placeholderData := generatePlaceholderImage(header.Filename)
 					thumbnailData = placeholderData
 				}
 
@@ -1518,9 +1459,68 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 					thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
 					err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
 					if err != nil {
-						log.Printf("Warning: Failed to save thumbnail for %s: %v", fileHeader.Filename, err)
+						log.Printf("Warning: Failed to save thumbnail for %s: %v", header.Filename, err)
 					}
 				}
+			}
+		} else {
+			// For non-seekable streams, we can't generate thumbnails
+			log.Printf("Info: Skipping thumbnail generation for non-seekable stream: %s", header.Filename)
+		}
+	} else {
+		// Process multiple files
+		for _, fileHeader := range files {
+			// Open the uploaded file
+			file, err := fileHeader.Open()
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error opening file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+			defer file.Close()
+
+			// Encrypt the filename
+			encFileName, err := encryptFileName(fileHeader.Filename, passwordHash)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error encrypting filename %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+
+			// Encrypt and save the file using streaming
+			encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
+			err = encryptAndSaveFileStream(file, encryptedPath, passwordHash)
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Error saving encrypted file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				continue
+			}
+
+			// For thumbnails, we need to read the file
+			if seeker, ok := file.(io.Seeker); ok {
+				seeker.Seek(0, io.SeekStart)
+				fileData, err := io.ReadAll(file)
+				if err == nil && (isImageFile(fileHeader.Filename) || isVideoFile(fileHeader.Filename)) {
+					thumbnailData, err := createThumbnail(fileData, fileHeader.Filename, passwordHash)
+					if err != nil {
+						log.Printf("Warning: Failed to generate thumbnail for %s: %v", fileHeader.Filename, err)
+						// Generate placeholder thumbnail instead
+						placeholderData := generatePlaceholderImage(fileHeader.Filename)
+						thumbnailData = placeholderData
+					}
+
+					// Save encrypted thumbnail (either real thumbnail or placeholder)
+					thumbnailDir := filepath.Join(thumbnailsDir, cleanDir)
+					err = os.MkdirAll(thumbnailDir, 0750)
+					if err != nil {
+						log.Printf("Warning: Failed to create thumbnail directory: %v", err)
+					} else {
+						thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
+						err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
+						if err != nil {
+							log.Printf("Warning: Failed to save thumbnail for %s: %v", fileHeader.Filename, err)
+						}
+					}
+				}
+			} else {
+				log.Printf("Info: Skipping thumbnail generation for non-seekable stream: %s", fileHeader.Filename)
 			}
 		}
 	}
@@ -1948,6 +1948,94 @@ func encryptAndSaveFile(data []byte, path string, passwordHash string) error {
 	}
 
 	return nil
+}
+
+// encryptAndSaveFileStream encrypts and saves a file using streaming (for large files)
+func encryptAndSaveFileStream(reader io.Reader, path string, passwordHash string) error {
+	if reader == nil {
+		return errors.New("reader cannot be nil")
+	}
+
+	block, err := createAESCipher(passwordHash)
+	if err != nil {
+		return err
+	}
+
+	// Create initialization vector
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return err
+	}
+
+	// Create the file
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Write IV to the beginning of the file
+	if _, err := f.Write(iv); err != nil {
+		return err
+	}
+
+	// Create encryption stream
+	stream := cipher.NewCFBEncrypter(block, iv)
+
+	// We need to buffer encrypted data for HMAC calculation
+	// Use a buffer to hold encrypted data before writing HMAC
+	var encryptedBuffer bytes.Buffer
+	encryptionWriter := &cipherWriteWriter{
+		stream: stream,
+		writer: &encryptedBuffer,
+	}
+
+	// Buffer size for reading from input
+	buf := make([]byte, 32*1024) // 32KB buffer
+
+	// Read, encrypt, and buffer the data
+	_, err = io.CopyBuffer(encryptionWriter, reader, buf)
+	if err != nil {
+		return err
+	}
+
+	// Create HMAC for authenticated encryption
+	h := hmac.New(sha256.New, []byte(passwordHash))
+	h.Write(encryptedBuffer.Bytes()) // Add the encrypted data to HMAC
+	mac := h.Sum(nil)
+
+	// Write the HMAC size and value
+	macSize := make([]byte, 8)
+	macSize[0] = byte(len(mac))
+	if _, err := f.Write(macSize); err != nil {
+		return err
+	}
+	if _, err := f.Write(mac); err != nil {
+		return err
+	}
+
+	// Write the encrypted data
+	if _, err := f.Write(encryptedBuffer.Bytes()); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// cipherWriteWriter is a writer that encrypts data as it writes
+type cipherWriteWriter struct {
+	stream cipher.Stream
+	writer io.Writer
+}
+
+func (w *cipherWriteWriter) Write(data []byte) (int, error) {
+	encrypted := make([]byte, len(data))
+	w.stream.XORKeyStream(encrypted, data)
+	n, err := w.writer.Write(encrypted)
+	if err != nil {
+		return n, err
+	}
+	return len(data), nil // Return original data length, not encrypted length
 }
 
 // decryptFile decrypts a file
