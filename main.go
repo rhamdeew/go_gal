@@ -1788,6 +1788,38 @@ func createAESCipher(passwordHash string) (cipher.Block, error) {
 
 // encryptFileName encrypts a filename
 func encryptFileName(filename string, passwordHash string) (string, error) {
+	// Trim long filenames to prevent encrypted result from exceeding filesystem limits
+	// After hex encoding (2x), encryption adds IV and validation tag, so we need to
+	// keep the base filename short enough that the encrypted version stays under 255 chars
+	maxBaseLength := 100 // Reasonable limit that ensures encrypted result stays under filesystem limits
+
+	if len(filename) > maxBaseLength {
+		// Extract file extension
+		ext := filepath.Ext(filename)
+		baseName := filename[:len(filename)-len(ext)]
+
+		// Create a hash of the full filename for uniqueness
+		hasher := sha256.New()
+		hasher.Write([]byte(filename))
+		hashStr := hex.EncodeToString(hasher.Sum(nil))[:8] // First 8 chars of hash
+
+		// Calculate available length for base name
+		// Final format: baseName_hashStr.ext
+		// So we need: baseName + 1 (underscore) + hashStr + ext <= maxBaseLength
+		availableLength := maxBaseLength - len(hashStr) - len(ext) - 1 // -1 for the underscore
+		if availableLength < 10 {
+			availableLength = 10 // Keep at least some of the original name
+		}
+
+		if len(baseName) > availableLength {
+			baseName = baseName[:availableLength]
+		}
+
+		originalLength := len(filename)
+		filename = baseName + "_" + hashStr + ext
+		log.Printf("Trimmed long filename from %d to %d characters", originalLength, len(filename))
+	}
+
 	data := []byte(filename)
 	block, err := createAESCipher(passwordHash)
 	if err != nil {

@@ -103,7 +103,7 @@ func TestEncryptFileNameEdgeCases(t *testing.T) {
 		t.Errorf("Decrypted empty filename is not empty: %s", decryptedEmpty)
 	}
 
-	// Test with very long filename
+	// Test with very long filename - should be trimmed before encryption
 	longName := string(make([]byte, 1000))
 	for i := range longName {
 		longName = longName[:i] + "a" + longName[i+1:]
@@ -114,13 +114,32 @@ func TestEncryptFileNameEdgeCases(t *testing.T) {
 		t.Fatalf("Failed to encrypt long filename: %v", err)
 	}
 
+	// Verify encrypted name doesn't exceed reasonable length
+	// The encrypted version (hex encoding) should be well under filesystem limits
+	if len(encryptedLong) > 255*2 { // *2 for hex encoding
+		t.Errorf("Encrypted filename too long: %d characters", len(encryptedLong))
+	}
+
 	decryptedLong, err := decryptFileName(encryptedLong, passwordHash)
 	if err != nil {
 		t.Fatalf("Failed to decrypt long filename: %v", err)
 	}
 
-	if decryptedLong != longName {
-		t.Errorf("Decrypted long filename doesn't match original")
+	// After the change, long filenames are trimmed, so we expect the decrypted
+	// version to be shorter than the original
+	if len(decryptedLong) >= len(longName) {
+		t.Errorf("Expected long filename to be trimmed, got length %d (original was %d)",
+			len(decryptedLong), len(longName))
+	}
+
+	// The decrypted filename should be at most 100 chars + extension
+	if len(decryptedLong) > 110 { // 100 + hash + underscore + small extension buffer
+		t.Errorf("Trimmed filename still too long: %d characters", len(decryptedLong))
+	}
+
+	// Verify the trimmed filename contains a hash (for uniqueness)
+	if !strings.Contains(decryptedLong, "_") {
+		t.Errorf("Expected trimmed filename to contain hash separator")
 	}
 }
 
@@ -169,5 +188,45 @@ func TestShortEncryptedData(t *testing.T) {
 		t.Error("Expected error when decrypting too-short data, but got none")
 	} else if !strings.Contains(err.Error(), "too short") {
 		t.Errorf("Expected 'too short' error, got: %v", err)
+	}
+}
+
+func TestLongFilenameFromRealWorld(t *testing.T) {
+	// Test the exact scenario from the bug report - very long video filename
+	passwordHash := hashPassword("testpassword")
+
+	// This is a realistic long filename that would cause "file name too long" error
+	longFilename := "Anal Ass To Mouth Blowjob Kissing Lesbian POV Pussy To Mouth Sata Jones Threesome Zoe Doll [aggressivehappybee].mp4"
+
+	encryptedName, err := encryptFileName(longFilename, passwordHash)
+	if err != nil {
+		t.Fatalf("Failed to encrypt long filename: %v", err)
+	}
+
+	// The encrypted filename (hex) should be within filesystem limits
+	if len(encryptedName) > 400 { // Reasonable limit for hex-encoded encrypted filename
+		t.Errorf("Encrypted filename too long: %d characters", len(encryptedName))
+	}
+
+	// Verify we can decrypt it back
+	decryptedName, err := decryptFileName(encryptedName, passwordHash)
+	if err != nil {
+		t.Fatalf("Failed to decrypt long filename: %v", err)
+	}
+
+	// The decrypted name should be trimmed (shorter than original)
+	if len(decryptedName) >= len(longFilename) {
+		t.Errorf("Expected filename to be trimmed, got %d chars (original %d)",
+			len(decryptedName), len(longFilename))
+	}
+
+	// Verify the extension is preserved
+	if !strings.HasSuffix(decryptedName, ".mp4") {
+		t.Errorf("Expected .mp4 extension to be preserved, got: %s", decryptedName)
+	}
+
+	// Verify it contains a hash for uniqueness
+	if !strings.Contains(decryptedName, "_") {
+		t.Errorf("Expected trimmed filename to contain hash separator")
 	}
 }

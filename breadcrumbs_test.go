@@ -193,34 +193,39 @@ func TestEncryptDecryptFileNameEdgeCases(t *testing.T) {
 	wrongPasswordHash := hashPassword("wrongpassword")
 
 	tests := []struct {
-		name         string
-		filename     string
-		passwordHash string
-		expectError  bool
+		name               string
+		filename           string
+		passwordHash       string
+		expectError        bool
+		expectTrimmed      bool
 	}{
 		{
-			name:         "Very long filename",
-			filename:     "this_is_a_very_long_filename_with_many_characters_to_test_encryption_and_decryption_functionality.txt",
-			passwordHash: passwordHash,
-			expectError:  false,
+			name:          "Very long filename (will be trimmed)",
+			filename:      "this_is_a_very_long_filename_with_many_characters_to_test_encryption_and_decryption_functionality.txt",
+			passwordHash:  passwordHash,
+			expectError:   false,
+			expectTrimmed: true, // This filename is 104 chars, exceeds 100 char limit
 		},
 		{
-			name:         "Filename with special characters",
-			filename:     "file@#$%^&*()_+-={}[]|\\:;\"'<>,.?/~`.txt",
-			passwordHash: passwordHash,
-			expectError:  false,
+			name:          "Filename with special characters",
+			filename:      "file@#$%^&*()_+-={}[]|\\:;\"'<>,.?/~`.txt",
+			passwordHash:  passwordHash,
+			expectError:   false,
+			expectTrimmed: false,
 		},
 		{
-			name:         "Unicode filename",
-			filename:     "文件名中文.txt",
-			passwordHash: passwordHash,
-			expectError:  false,
+			name:          "Unicode filename",
+			filename:      "文件名中文.txt",
+			passwordHash:  passwordHash,
+			expectError:   false,
+			expectTrimmed: false,
 		},
 		{
-			name:         "Wrong password",
-			filename:     "test.txt",
-			passwordHash: wrongPasswordHash,
-			expectError:  true,
+			name:          "Wrong password",
+			filename:      "test.txt",
+			passwordHash:  wrongPasswordHash,
+			expectError:   true,
+			expectTrimmed: false,
 		},
 	}
 
@@ -247,8 +252,25 @@ func TestEncryptDecryptFileNameEdgeCases(t *testing.T) {
 				return
 			}
 
-			if decrypted != tt.filename {
-				t.Errorf("decryptFileName() = %s, want %s", decrypted, tt.filename)
+			if tt.expectTrimmed {
+				// For long filenames, verify trimming occurred
+				if len(decrypted) >= len(tt.filename) {
+					t.Errorf("Expected filename to be trimmed, got %d chars (original %d)",
+						len(decrypted), len(tt.filename))
+				}
+				// Verify extension is preserved
+				if !strings.HasSuffix(decrypted, ".txt") {
+					t.Errorf("Expected .txt extension to be preserved, got: %s", decrypted)
+				}
+				// Verify hash separator exists
+				if !strings.Contains(decrypted, "_") {
+					t.Errorf("Expected trimmed filename to contain hash separator")
+				}
+			} else {
+				// For normal filenames, verify exact match
+				if decrypted != tt.filename {
+					t.Errorf("decryptFileName() = %s, want %s", decrypted, tt.filename)
+				}
 			}
 		})
 	}
