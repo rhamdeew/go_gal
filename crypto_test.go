@@ -5,13 +5,14 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"golang.org/x/crypto/argon2"
 )
 
 func TestGenerateSelfSignedCert(t *testing.T) {
@@ -98,14 +99,12 @@ func TestAESEncryptionDecryption(t *testing.T) {
 
 func TestHashPasswordAlgorithm(t *testing.T) {
 	t.Parallel()
-	// Test the internal implementation of hashPassword to ensure it uses SHA-256
+	// Test the internal implementation of hashPassword to ensure it uses Argon2id
 	password := "test_password"
 
-	// Compute hash directly
-	h := sha256.New()
-	h.Write([]byte(password))
-	h.Write(saltBytes)
-	directHash := hex.EncodeToString(h.Sum(nil))
+	// Compute hash directly using Argon2id
+	key := argon2.IDKey([]byte(password), saltBytes, 3, 64*1024, 4, 32)
+	directHash := hex.EncodeToString(key)
 
 	// Compare with the function's result
 	funcHash := hashPassword(password)

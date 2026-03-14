@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
@@ -32,13 +33,33 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/nfnt/resize"
+	"golang.org/x/crypto/argon2"
 	"golang.org/x/image/webp"
 )
+
+const (
+	fileFormatV2Magic = byte(0x02)  // version byte for new file format
+	fileNameV2Magic   = byte(0x02)  // version byte for new filename format
+	fileV1Overhead    = int64(56)   // v1: 16 IV + 8 MAC_size + 32 MAC
+	fileV2Overhead    = int64(49)   // v2: 1 version + 16 IV + 32 HMAC
+)
+
+// Login rate limiter
+var (
+	loginMu     sync.Mutex
+	loginCounts = make(map[string]loginAttemptState)
+)
+
+type loginAttemptState struct {
+	count   int
+	resetAt time.Time
+}
 
 // Global variables
 var (
@@ -184,7 +205,23 @@ func main() {
 	enableSSL := flag.Bool("ssl", false, "Enable HTTPS with self-signed certificates")
 	certFile := flag.String("cert", "cert.pem", "Path to SSL certificate file")
 	keyFile := flag.String("key", "key.pem", "Path to SSL key file")
+	migrate := flag.Bool("migrate", false, "Migrate gallery files from v1 to v2 encryption format")
 	flag.Parse()
+
+	if *migrate {
+		reader := bufio.NewReader(os.Stdin)
+		fmt.Print("Enter gallery password: ")
+		password, _ := reader.ReadString('\n')
+		password = strings.TrimRight(password, "\r\n")
+		if password == "" {
+			log.Fatal("Password cannot be empty")
+		}
+		fmt.Println("Starting migration...")
+		if err := runMigration(password); err != nil {
+			log.Fatalf("Migration failed: %v", err)
+		}
+		os.Exit(0)
+	}
 
 	// Set SSL environment variable based on command-line flag
 	if *enableSSL {
@@ -261,7 +298,7 @@ func main() {
 
 		server := &http.Server{
 			Addr:              serverAddr,
-			Handler:           r,
+			Handler:           securityHeaders(r),
 			TLSConfig:         tlsConfig,
 			ReadTimeout:       30 * time.Minute, // Allow enough time for large file uploads
 			WriteTimeout:      30 * time.Minute, // Allow enough time for large file downloads
@@ -275,7 +312,7 @@ func main() {
 		fmt.Printf("Server started at http://%s:%s\n", *host, *port)
 		server := &http.Server{
 			Addr:              serverAddr,
-			Handler:           r,
+			Handler:           securityHeaders(r),
 			ReadTimeout:       30 * time.Minute, // Allow enough time for large file uploads
 			WriteTimeout:      30 * time.Minute, // Allow enough time for large file downloads
 			ReadHeaderTimeout: 10 * time.Second,
@@ -339,7 +376,7 @@ func generateSelfSignedCert(certPath, keyPath string) error {
 	}
 
 	// Write private key to file
-	keyOut, err := os.Create(keyPath)
+	keyOut, err := os.OpenFile(keyPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
@@ -583,6 +620,16 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Error executing login template: %v", err)
 			http.Error(w, "Error rendering login page", http.StatusInternalServerError)
 		}
+		return
+	}
+
+	// Rate limit login attempts
+	clientIP := r.RemoteAddr
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		clientIP = host
+	}
+	if !checkLoginRateLimit(clientIP) {
+		http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
 		return
 	}
 
@@ -880,7 +927,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 
-			http.Error(w, "Error serving video file: "+err.Error(), http.StatusInternalServerError)
+			http.Error(w, "Error serving file", http.StatusInternalServerError)
 		}
 		return
 	}
@@ -902,7 +949,7 @@ func viewHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		http.Error(w, "Error decrypting file: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error serving file", http.StatusInternalServerError)
 		return
 	}
 
@@ -1043,23 +1090,40 @@ func parseRangeHeader(rangeHeader string, size int64) ([]httpRange, error) {
 
 // getDecryptedFileSize returns the size of the decrypted file without fully decrypting it
 func getDecryptedFileSize(filePath, passwordHash string) (int64, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return 0, err
+	}
+	versionBuf := make([]byte, 1)
+	_, readErr := f.Read(versionBuf)
+	f.Close()
+	if readErr != nil {
+		return 0, readErr
+	}
+
 	fileInfo, err := os.Stat(filePath)
 	if err != nil {
 		return 0, err
 	}
-
-	// Calculate decrypted size: total file size - IV (16 bytes) - MAC size header (8 bytes) - MAC (32 bytes)
 	encryptedSize := fileInfo.Size()
-	if encryptedSize < 56 { // Minimum size: 16 (IV) + 8 (MAC size) + 32 (MAC) = 56 bytes
-		return 0, fmt.Errorf("encrypted file is too small")
+
+	if versionBuf[0] == fileFormatV2Magic {
+		// v2: 1 (version) + 16 (IV) + 32 (HMAC) = 49 bytes overhead
+		if encryptedSize < fileV2Overhead {
+			return 0, fmt.Errorf("encrypted file is too small")
+		}
+		return encryptedSize - fileV2Overhead, nil
 	}
 
-	// The decrypted size is the encrypted size minus the overhead
-	return encryptedSize - 56, nil
+	// v1: 16 (IV) + 8 (MAC size header) + 32 (MAC) = 56 bytes overhead
+	if encryptedSize < fileV1Overhead {
+		return 0, fmt.Errorf("encrypted file is too small")
+	}
+	return encryptedSize - fileV1Overhead, nil
 }
 
-// streamDecryptedFile streams a portion of the decrypted file with memory-efficient HMAC verification
-func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end int64) error {
+// streamDecryptedFileV1 streams a portion of the decrypted file with memory-efficient HMAC verification (v1 format)
+func streamDecryptedFileV1(w io.Writer, filePath, passwordHash string, start, end int64) error {
 	// Open the encrypted file
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -1379,7 +1443,7 @@ func thumbnailHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		http.Error(w, "Error decrypting thumbnail: "+err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error serving thumbnail", http.StatusInternalServerError)
 		return
 	}
 
@@ -1521,7 +1585,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			// Open the uploaded file
 			file, err := fileHeader.Open()
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Error opening file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				http.Error(w, "Error processing uploaded file", http.StatusInternalServerError)
 				continue
 			}
 			defer file.Close()
@@ -1529,7 +1593,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			// Encrypt the filename
 			encFileName, err := encryptFileName(fileHeader.Filename, passwordHash)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Error encrypting filename %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				http.Error(w, "Error processing uploaded file", http.StatusInternalServerError)
 				continue
 			}
 
@@ -1537,7 +1601,7 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			encryptedPath := filepath.Join(targetDir, encFileName+encryptedExt)
 			err = encryptAndSaveFileStream(file, encryptedPath, passwordHash)
 			if err != nil {
-				http.Error(w, fmt.Sprintf("Error saving encrypted file %s: %v", fileHeader.Filename, err), http.StatusInternalServerError)
+				http.Error(w, "Error saving file", http.StatusInternalServerError)
 				continue
 			}
 
@@ -1740,7 +1804,7 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if removeErr != nil {
-		http.Error(w, "Error removing item: "+removeErr.Error(), http.StatusInternalServerError)
+		http.Error(w, "Error removing item", http.StatusInternalServerError)
 		return
 	}
 
@@ -1782,6 +1846,7 @@ func logoutHandler(w http.ResponseWriter, r *http.Request) {
 
 	session.Values["authenticated"] = false
 	session.Values["password_hash"] = ""
+	session.Options.MaxAge = -1 // Delete the cookie
 
 	if err := session.Save(r, w); err != nil {
 		log.Printf("Failed to save session in logoutHandler: %v", err)
@@ -1812,12 +1877,59 @@ func validateRedirectPath(cleanDir string) string {
 	return redirectPath
 }
 
-// hashPassword creates a secure hash from a password
-func hashPassword(password string) string {
+// securityHeaders adds security-related HTTP response headers
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("X-XSS-Protection", "1; mode=block")
+		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		w.Header().Set("Content-Security-Policy",
+			"default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'")
+		if os.Getenv("GO_GAL_SSL_ENABLED") == "true" {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// checkLoginRateLimit returns true if the IP is allowed to attempt login
+func checkLoginRateLimit(ip string) bool {
+	const maxAttempts = 10
+	const windowDuration = 15 * time.Minute
+
+	loginMu.Lock()
+	defer loginMu.Unlock()
+
+	state, exists := loginCounts[ip]
+	now := time.Now()
+
+	if !exists || now.After(state.resetAt) {
+		loginCounts[ip] = loginAttemptState{count: 1, resetAt: now.Add(windowDuration)}
+		return true
+	}
+
+	if state.count >= maxAttempts {
+		return false
+	}
+
+	state.count++
+	loginCounts[ip] = state
+	return true
+}
+
+// hashPasswordLegacy uses SHA256 — kept for migration compatibility only
+func hashPasswordLegacy(password string) string {
 	hasher := sha256.New()
 	hasher.Write([]byte(password))
 	hasher.Write(saltBytes)
 	return hex.EncodeToString(hasher.Sum(nil))
+}
+
+// hashPassword creates a secure hash from a password using Argon2id
+func hashPassword(password string) string {
+	key := argon2.IDKey([]byte(password), saltBytes, 3, 64*1024, 4, 32)
+	return hex.EncodeToString(key)
 }
 
 // createAESCipher creates an AES cipher from the password hash
@@ -1834,75 +1946,8 @@ func createAESCipher(passwordHash string) (cipher.Block, error) {
 	return aes.NewCipher(key)
 }
 
-// encryptFileName encrypts a filename
-func encryptFileName(filename string, passwordHash string) (string, error) {
-	// Trim long filenames to prevent encrypted result from exceeding filesystem limits
-	// After hex encoding (2x), encryption adds IV and validation tag, so we need to
-	// keep the base filename short enough that the encrypted version stays under 255 chars
-	maxBaseLength := 100 // Reasonable limit that ensures encrypted result stays under filesystem limits
-
-	if len(filename) > maxBaseLength {
-		// Extract file extension
-		ext := filepath.Ext(filename)
-		baseName := filename[:len(filename)-len(ext)]
-
-		// Create a hash of the full filename for uniqueness
-		hasher := sha256.New()
-		hasher.Write([]byte(filename))
-		hashStr := hex.EncodeToString(hasher.Sum(nil))[:8] // First 8 chars of hash
-
-		// Calculate available length for base name
-		// Final format: baseName_hashStr.ext
-		// So we need: baseName + 1 (underscore) + hashStr + ext <= maxBaseLength
-		availableLength := maxBaseLength - len(hashStr) - len(ext) - 1 // -1 for the underscore
-		if availableLength < 10 {
-			availableLength = 10 // Keep at least some of the original name
-		}
-
-		if len(baseName) > availableLength {
-			baseName = baseName[:availableLength]
-		}
-
-		originalLength := len(filename)
-		filename = baseName + "_" + hashStr + ext
-		log.Printf("Trimmed long filename from %d to %d characters", originalLength, len(filename))
-	}
-
-	data := []byte(filename)
-	block, err := createAESCipher(passwordHash)
-	if err != nil {
-		return "", err
-	}
-
-	// Create initialization vector
-	iv := make([]byte, aes.BlockSize)
-	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
-		return "", err
-	}
-
-	// Encrypt
-	stream := cipher.NewCFBEncrypter(block, iv)
-	encrypted := make([]byte, len(data))
-	stream.XORKeyStream(encrypted, data)
-
-	// Add a validation tag to verify correct password later
-	// Add a small validity check (4 bytes is enough)
-	validationTag := []byte("GOCR")
-	tagEncrypted := make([]byte, len(validationTag))
-	// Use the same IV for consistency (it's included in the output)
-	stream = cipher.NewCFBEncrypter(block, iv)
-	stream.XORKeyStream(tagEncrypted, validationTag)
-
-	// Combine IV + encrypted data + encrypted validation tag
-	combined := append(iv, encrypted...)
-	combined = append(combined, tagEncrypted...)
-
-	// Convert to hex string
-	return hex.EncodeToString(combined), nil
-}
-
-// decryptFileName decrypts a filename
-func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
+// decryptFileNameV1 is the legacy filename decryption using AES-CFB
+func decryptFileNameV1(encryptedHex string, passwordHash string) (string, error) {
 	// Convert from hex
 	encrypted, err := hex.DecodeString(encryptedHex)
 	if err != nil {
@@ -1944,8 +1989,112 @@ func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
 	return string(decrypted), nil
 }
 
-// encryptAndSaveFile encrypts and saves a file
-func encryptAndSaveFile(data []byte, path string, passwordHash string) error {
+// encryptFileNameV2 encrypts a filename using AES-256-GCM
+func encryptFileNameV2(filename string, passwordHash string) (string, error) {
+	key, err := hex.DecodeString(passwordHash)
+	if err != nil || len(key) < 16 {
+		return "", errors.New("invalid key")
+	}
+	if len(key) > 32 {
+		key = key[:32]
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		return "", err
+	}
+	ciphertext := gcm.Seal(nil, nonce, []byte(filename), nil)
+	// Format: [0x02][nonce][ciphertext+GCM tag]
+	combined := append([]byte{fileNameV2Magic}, nonce...)
+	combined = append(combined, ciphertext...)
+	return hex.EncodeToString(combined), nil
+}
+
+// decryptFileNameV2 decrypts a filename using AES-256-GCM
+func decryptFileNameV2(encryptedHex string, passwordHash string) (string, error) {
+	data, err := hex.DecodeString(encryptedHex)
+	if err != nil {
+		return "", err
+	}
+	key, err := hex.DecodeString(passwordHash)
+	if err != nil || len(key) < 16 {
+		return "", errors.New("invalid key")
+	}
+	if len(key) > 32 {
+		key = key[:32]
+	}
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", err
+	}
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonceSize := gcm.NonceSize()
+	minSize := 1 + nonceSize + gcm.Overhead()
+	if len(data) < minSize {
+		return "", errors.New("encrypted filename too short")
+	}
+	nonce := data[1 : 1+nonceSize]
+	ciphertext := data[1+nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", errors.New("decryption failed: incorrect password")
+	}
+	return string(plaintext), nil
+}
+
+// encryptFileName encrypts a filename using v2 (AES-GCM) format
+func encryptFileName(filename string, passwordHash string) (string, error) {
+	maxBaseLength := 100
+
+	if len(filename) > maxBaseLength {
+		ext := filepath.Ext(filename)
+		baseName := filename[:len(filename)-len(ext)]
+
+		hasher := sha256.New()
+		hasher.Write([]byte(filename))
+		hashStr := hex.EncodeToString(hasher.Sum(nil))[:8]
+
+		availableLength := maxBaseLength - len(hashStr) - len(ext) - 1
+		if availableLength < 10 {
+			availableLength = 10
+		}
+
+		if len(baseName) > availableLength {
+			baseName = baseName[:availableLength]
+		}
+
+		originalLength := len(filename)
+		filename = baseName + "_" + hashStr + ext
+		log.Printf("Trimmed long filename from %d to %d characters", originalLength, len(filename))
+	}
+
+	return encryptFileNameV2(filename, passwordHash)
+}
+
+// decryptFileName decrypts a filename, detecting v1 or v2 format
+func decryptFileName(encryptedHex string, passwordHash string) (string, error) {
+	data, err := hex.DecodeString(encryptedHex)
+	if err != nil {
+		return "", err
+	}
+	if len(data) > 0 && data[0] == fileNameV2Magic {
+		return decryptFileNameV2(encryptedHex, passwordHash)
+	}
+	return decryptFileNameV1(encryptedHex, passwordHash)
+}
+
+// encryptAndSaveFileV1 encrypts and saves a file using v1 format (legacy)
+func encryptAndSaveFileV1(data []byte, path string, passwordHash string) error {
 	block, err := createAESCipher(passwordHash)
 	if err != nil {
 		return err
@@ -1998,8 +2147,8 @@ func encryptAndSaveFile(data []byte, path string, passwordHash string) error {
 	return nil
 }
 
-// encryptAndSaveFileStream encrypts and saves a file using streaming (for large files)
-func encryptAndSaveFileStream(reader io.Reader, path string, passwordHash string) error {
+// encryptAndSaveFileStreamV1 encrypts and saves a file using streaming (for large files) - legacy v1 format
+func encryptAndSaveFileStreamV1(reader io.Reader, path string, passwordHash string) error {
 	if reader == nil {
 		return errors.New("reader cannot be nil")
 	}
@@ -2070,6 +2219,359 @@ func encryptAndSaveFileStream(reader io.Reader, path string, passwordHash string
 	return nil
 }
 
+// encryptAndSaveFileV2 encrypts data using v2 format: [0x02][IV][HMAC(IV+ciphertext)][ciphertext]
+func encryptAndSaveFileV2(data []byte, path string, passwordHash string) error {
+	key, err := hex.DecodeString(passwordHash)
+	if err != nil {
+		return err
+	}
+	if len(key) > 32 {
+		key = key[:32]
+	} else if len(key) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, key)
+		key = padded
+	}
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	stream := cipher.NewCFBEncrypter(block, iv)
+	ciphertext := make([]byte, len(data))
+	stream.XORKeyStream(ciphertext, data)
+
+	// HMAC includes IV to prevent IV tampering
+	h := hmac.New(sha256.New, key)
+	h.Write(iv)
+	h.Write(ciphertext)
+	mac := h.Sum(nil) // 32 bytes
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte{fileFormatV2Magic}); err != nil {
+		return err
+	}
+	if _, err := f.Write(iv); err != nil {
+		return err
+	}
+	if _, err := f.Write(mac); err != nil {
+		return err
+	}
+	if _, err := f.Write(ciphertext); err != nil {
+		return err
+	}
+	return nil
+}
+
+// encryptAndSaveFileStreamV2 encrypts a stream using v2 format
+func encryptAndSaveFileStreamV2(reader io.Reader, path string, passwordHash string) error {
+	if reader == nil {
+		return errors.New("reader cannot be nil")
+	}
+
+	key, err := hex.DecodeString(passwordHash)
+	if err != nil {
+		return err
+	}
+	if len(key) > 32 {
+		key = key[:32]
+	} else if len(key) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, key)
+		key = padded
+	}
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(rand.Reader, iv); err != nil {
+		return err
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	stream := cipher.NewCFBEncrypter(block, iv)
+
+	var encryptedBuffer bytes.Buffer
+	encryptionWriter := &cipherWriteWriter{
+		stream: stream,
+		writer: &encryptedBuffer,
+	}
+
+	buf := make([]byte, 32*1024)
+	if _, err = io.CopyBuffer(encryptionWriter, reader, buf); err != nil {
+		return err
+	}
+
+	// HMAC includes IV
+	h := hmac.New(sha256.New, key)
+	h.Write(iv)
+	h.Write(encryptedBuffer.Bytes())
+	mac := h.Sum(nil) // 32 bytes
+
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write([]byte{fileFormatV2Magic}); err != nil {
+		return err
+	}
+	if _, err := f.Write(iv); err != nil {
+		return err
+	}
+	if _, err := f.Write(mac); err != nil {
+		return err
+	}
+	if _, err := f.Write(encryptedBuffer.Bytes()); err != nil {
+		return err
+	}
+	return nil
+}
+
+// decryptFileV2 decrypts a v2 format file
+func decryptFileV2(path string, passwordHash string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	// Skip version byte (already verified by caller)
+	versionBuf := make([]byte, 1)
+	if _, err := io.ReadFull(f, versionBuf); err != nil {
+		return nil, fmt.Errorf("file corrupted: %v", err)
+	}
+
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(f, iv); err != nil {
+		return nil, fmt.Errorf("file corrupted (IV): %v", err)
+	}
+
+	mac := make([]byte, 32)
+	if _, err := io.ReadFull(f, mac); err != nil {
+		return nil, fmt.Errorf("file corrupted (HMAC): %v", err)
+	}
+
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	ciphertextSize := fileInfo.Size() - fileV2Overhead
+	if ciphertextSize <= 0 {
+		return nil, errors.New("file corrupted: no encrypted data")
+	}
+
+	ciphertext := make([]byte, ciphertextSize)
+	if _, err := io.ReadFull(f, ciphertext); err != nil {
+		return nil, fmt.Errorf("file corrupted (data): %v", err)
+	}
+
+	key, err := hex.DecodeString(passwordHash)
+	if err != nil {
+		return nil, err
+	}
+	if len(key) > 32 {
+		key = key[:32]
+	} else if len(key) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, key)
+		key = padded
+	}
+
+	h := hmac.New(sha256.New, key)
+	h.Write(iv)
+	h.Write(ciphertext)
+	expectedMAC := h.Sum(nil)
+	if !hmac.Equal(mac, expectedMAC) {
+		return nil, errors.New("decryption failed: incorrect password or tampered file")
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return nil, err
+	}
+	streamDec := cipher.NewCFBDecrypter(block, iv)
+	decrypted := make([]byte, len(ciphertext))
+	streamDec.XORKeyStream(decrypted, ciphertext)
+	return decrypted, nil
+}
+
+// streamDecryptedFileV2 streams a portion of a v2 format decrypted file
+func streamDecryptedFileV2(w io.Writer, filePath, passwordHash string, start, end int64) error {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	// Skip version byte
+	versionBuf := make([]byte, 1)
+	if _, err := io.ReadFull(f, versionBuf); err != nil {
+		return fmt.Errorf("file corrupted: %v", err)
+	}
+
+	// Read IV
+	iv := make([]byte, aes.BlockSize)
+	if _, err := io.ReadFull(f, iv); err != nil {
+		return fmt.Errorf("file corrupted (IV): %v", err)
+	}
+
+	// Read HMAC (32 bytes, fixed in v2)
+	mac := make([]byte, 32)
+	if _, err := io.ReadFull(f, mac); err != nil {
+		return fmt.Errorf("file corrupted (HMAC): %v", err)
+	}
+
+	key, err := hex.DecodeString(passwordHash)
+	if err != nil {
+		return err
+	}
+	if len(key) > 32 {
+		key = key[:32]
+	} else if len(key) < 32 {
+		padded := make([]byte, 32)
+		copy(padded, key)
+		key = padded
+	}
+
+	fileInfo, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	encryptedSize := fileInfo.Size() - fileV2Overhead
+	if encryptedSize <= 0 {
+		return fmt.Errorf("file corrupted: no encrypted data")
+	}
+
+	// PASS 1: Streaming HMAC verification (includes IV)
+	chunkSize := int64(64 * 1024)
+	h := hmac.New(sha256.New, key)
+	h.Write(iv) // IV is part of MAC in v2
+	chunk := make([]byte, chunkSize)
+	bytesRemaining := encryptedSize
+
+	for bytesRemaining > 0 {
+		bytesToRead := chunkSize
+		if bytesRemaining < chunkSize {
+			bytesToRead = bytesRemaining
+		}
+		n, err := io.ReadFull(f, chunk[:bytesToRead])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("file corrupted (read error during HMAC verification): %v", err)
+		}
+		h.Write(chunk[:n])
+		bytesRemaining -= int64(n)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+
+	expectedMAC := h.Sum(nil)
+	if !hmac.Equal(mac, expectedMAC) {
+		return fmt.Errorf("decryption failed: incorrect password or tampered file")
+	}
+
+	// PASS 2: Seek back to ciphertext start and decrypt requested range
+	_, err = f.Seek(fileV2Overhead, io.SeekStart)
+	if err != nil {
+		return fmt.Errorf("failed to seek in file: %v", err)
+	}
+
+	endByte := end + 1
+	if endByte > encryptedSize {
+		endByte = encryptedSize
+	}
+
+	encryptedData := make([]byte, endByte)
+	bytesRead := int64(0)
+	for bytesRead < endByte {
+		bytesToRead := chunkSize
+		if remaining := endByte - bytesRead; remaining < chunkSize {
+			bytesToRead = remaining
+		}
+		n, err := io.ReadFull(f, encryptedData[bytesRead:bytesRead+bytesToRead])
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("file corrupted (read error during data extraction): %v", err)
+		}
+		bytesRead += int64(n)
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return err
+	}
+	streamDec := cipher.NewCFBDecrypter(block, iv)
+	decryptedData := make([]byte, endByte)
+	streamDec.XORKeyStream(decryptedData, encryptedData[:endByte])
+
+	rangeData := decryptedData[start:endByte]
+	_, err = w.Write(rangeData)
+	return err
+}
+
+// encryptAndSaveFile encrypts and saves a file (dispatches to v2)
+func encryptAndSaveFile(data []byte, path string, passwordHash string) error {
+	return encryptAndSaveFileV2(data, path, passwordHash)
+}
+
+// encryptAndSaveFileStream encrypts and saves a file using streaming (dispatches to v2)
+func encryptAndSaveFileStream(reader io.Reader, path string, passwordHash string) error {
+	return encryptAndSaveFileStreamV2(reader, path, passwordHash)
+}
+
+// decryptFile decrypts a file, detecting v1 or v2 format
+func decryptFile(path string, passwordHash string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	versionBuf := make([]byte, 1)
+	_, err = f.Read(versionBuf)
+	f.Close()
+	if err != nil {
+		return nil, fmt.Errorf("file corrupted: %v", err)
+	}
+	if versionBuf[0] == fileFormatV2Magic {
+		return decryptFileV2(path, passwordHash)
+	}
+	return decryptFileV1(path, passwordHash)
+}
+
+// streamDecryptedFile streams a portion of a decrypted file, detecting v1 or v2 format
+func streamDecryptedFile(w io.Writer, filePath, passwordHash string, start, end int64) error {
+	// Detect format
+	f, err := os.Open(filePath)
+	if err != nil {
+		return err
+	}
+	versionBuf := make([]byte, 1)
+	_, readErr := f.Read(versionBuf)
+	f.Close()
+	if readErr != nil {
+		return fmt.Errorf("file corrupted: %v", readErr)
+	}
+
+	if versionBuf[0] == fileFormatV2Magic {
+		return streamDecryptedFileV2(w, filePath, passwordHash, start, end)
+	}
+	return streamDecryptedFileV1(w, filePath, passwordHash, start, end)
+}
+
 // cipherWriteWriter is a writer that encrypts data as it writes
 type cipherWriteWriter struct {
 	stream cipher.Stream
@@ -2086,8 +2588,8 @@ func (w *cipherWriteWriter) Write(data []byte) (int, error) {
 	return len(data), nil // Return original data length, not encrypted length
 }
 
-// decryptFile decrypts a file
-func decryptFile(path string, passwordHash string) ([]byte, error) {
+// decryptFileV1 decrypts a v1 format file (legacy)
+func decryptFileV1(path string, passwordHash string) ([]byte, error) {
 	// Open the encrypted file
 	f, err := os.Open(path)
 	if err != nil {

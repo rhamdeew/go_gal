@@ -41,3 +41,6 @@ thumbnails/
 # CI/CD artifacts
 *.zip
 *.tar.gz
+
+# Example files
+example/

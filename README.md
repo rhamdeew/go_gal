@@ -86,15 +86,28 @@ For video thumbnail generation, FFmpeg must be installed:
 
 ## Security Features
 
-- Folder and file names are encrypted using AES-256
-- File contents are encrypted with AES-256
-- File integrity verification with HMAC-SHA256 to detect tampering
-- Validation tags for filename encryption to verify password correctness
-- No passwords are stored on the server, only used for encryption/decryption
-- Session-based authentication with secure cookies
-- Optional HTTPS with TLS 1.2+ for secure connections
+- Folder and file names are encrypted using **AES-256-GCM** (authenticated encryption)
+- File contents are encrypted with **AES-256-CFB** with **HMAC-SHA256** integrity protection (IV is authenticated)
+- Password-based key derivation using **Argon2id** (GPU/ASIC-resistant, OWASP recommended)
+- No passwords are stored on the server — only the derived key is held in the session
+- Session-based authentication with secure cookies (HttpOnly, SameSite)
+- Cookie is fully deleted on logout (MaxAge=-1)
+- Login rate limiting: 10 attempts per 15-minute window per IP
+- Optional HTTPS with TLS 1.2+ and TLS private key stored with restricted permissions (0600)
+- Security response headers: `X-Frame-Options`, `X-Content-Type-Options`, `Content-Security-Policy`, `Referrer-Policy`, `Strict-Transport-Security` (when SSL enabled)
 - Protection against directory traversal attacks
 - Environment variable configuration for sensitive values
+
+### File Format Versions
+
+The application uses a versioned file format to allow safe upgrades:
+
+| Version | KDF | File cipher | Filename cipher | Notes |
+|---------|-----|------------|-----------------|-------|
+| v1 (legacy) | SHA-256 | AES-256-CFB + HMAC | AES-256-CFB | Readable by new binary |
+| **v2 (current)** | **Argon2id** | **AES-256-CFB + HMAC(IV+data)** | **AES-256-GCM** | Written by new binary |
+
+New files are always written in v2. Old v1 files remain readable until you run the migration.
 
 ## Environment Variables
 
@@ -166,6 +179,7 @@ export GO_GAL_SALT="your-random-secure-salt"
    --ssl=true/false  : Enable HTTPS with self-signed certificates (default: false)
    --cert=<path>     : Specify a custom path for the SSL certificate (default: cert.pem)
    --key=<path>      : Specify a custom path for the SSL private key (default: key.pem)
+   --migrate         : Migrate gallery files from v1 to v2 encryption format (see Migration section)
    ```
 
 2. Open your web browser and go to:
@@ -192,18 +206,120 @@ export GO_GAL_SALT="your-random-secure-salt"
    - See image and video previews before uploading
    - View images and videos by clicking on them
 
+## Migrating from a Previous Version
+
+If you have an existing gallery encrypted with an older version of go_gal, you need to run the one-time migration to upgrade all files to the new v2 format (Argon2id key derivation + improved HMAC). The new binary can **read** old files without migration, but migration is strongly recommended for security.
+
+### What changes during migration
+
+| | Before | After |
+|---|---|---|
+| Key derivation | SHA-256 (single pass) | Argon2id (GPU-resistant) |
+| Filename encryption | AES-256-CFB | AES-256-GCM |
+| File HMAC | Covers ciphertext only | Covers IV + ciphertext |
+| File format | v1 | v2 |
+
+The gallery password does **not** change. All your files remain accessible.
+
+### Step 1 — Backup
+
+```bash
+cp -r gallery/ gallery_backup/
+cp -r thumbnails/ thumbnails_backup/
+```
+
+### Step 2 — Set environment variables
+
+Make sure you use the **same** `GO_GAL_SALT` value as your running instance — it is part of the key derivation:
+
+```bash
+export GO_GAL_SESSION_KEY="your-session-key"
+export GO_GAL_SALT="your-salt"
+```
+
+If you were using the defaults (no env vars set), do not set them now either — leave them unset so the migration uses the same defaults.
+
+### Step 3 — Stop the server and run migration
+
+```bash
+# Stop the gallery server first
+sudo systemctl stop go_gal   # or kill the process
+
+# Run migration (you will be prompted for the gallery password)
+./go_gal --migrate
+```
+
+Example output:
+```
+Enter gallery password:
+Starting migration...
+Migrated: gallery/3a8f1c...enc
+Migrated: gallery/7d2b04...enc
+...
+
+=== Migration Complete ===
+Files processed:  47
+Files migrated:   47
+Files skipped:    0  (already v2)
+File errors:      0
+Dirs migrated:    3
+Dir errors:       0
+```
+
+If there are any errors, the original files are untouched — restore from backup and report the issue.
+
+### Step 4 — Restart the server
+
+```bash
+sudo systemctl start go_gal
+```
+
+On first login after migration you will notice a ~1 second delay at the login screen — this is Argon2id computing the key, which is intentional and prevents brute-force attacks.
+
+### Step 5 — Clean up backup (after confirming everything works)
+
+```bash
+rm -rf gallery_backup/ thumbnails_backup/
+```
+
+### systemd update with migration
+
+If running as a systemd service, the full update sequence is:
+
+```bash
+# 1. Stop service
+sudo systemctl stop go_gal
+
+# 2. Backup gallery data
+cp -r /opt/go_gal/gallery /opt/go_gal/gallery_backup
+cp -r /opt/go_gal/thumbnails /opt/go_gal/thumbnails_backup
+
+# 3. Install new binary (preserve existing keys)
+sudo ./install.sh \
+  --session-key="your_existing_session_key" \
+  --salt="your_existing_salt"
+
+# 4. Run migration as the service user
+cd /opt/go_gal
+sudo -u go_gal GO_GAL_SALT="your_existing_salt" ./go_gal --migrate
+
+# 5. Start service
+sudo systemctl start go_gal
+```
+
 ## Important Notes
 
-- **Remember your password!** If you forget it, there is no way to recover your encrypted files since the password is not stored anywhere.
-- When creating a new gallery, the first password you enter will be the one used for encryption.
-- For security purposes, encryption/decryption happens on the server side, but the password is not stored permanently.
-- The application uses HMAC validation to detect file tampering, providing an additional layer of security.
+- **Remember your password!** If you forget it, there is no way to recover your encrypted files since the password is never stored on the server.
+- When creating a new gallery, the first password you enter will be the one used for all encryption.
+- Encryption and decryption happen on the server side; the password is only used during login to derive the encryption key (via Argon2id), which is then held in a signed session cookie for the session duration.
+- File integrity is verified with HMAC-SHA256 on every read, detecting tampering or corruption.
 - When using self-signed certificates, your browser may show a security warning. You can safely proceed for personal use.
 - **Security Best Practices:**
-  - For production or internet-facing deployments, always use HTTPS (--ssl=true)
-  - Set custom values for `GO_GAL_SESSION_KEY` and `GO_GAL_SALT` environment variables
-  - Consider running behind a reverse proxy for additional security
-  - Use strong, unique passwords for your gallery
+  - For production or internet-facing deployments, always use HTTPS (`--ssl=true`)
+  - Always set `GO_GAL_SESSION_KEY` and `GO_GAL_SALT` to strong, random values in production
+  - Run the `--migrate` command after upgrading from an older version to use the strongest available encryption
+  - Consider running behind a reverse proxy (nginx, Caddy) for additional security and proper TLS certificates
+  - Use a strong, unique password — Argon2id makes brute force expensive, but a strong password is still the primary defence
 
 ## GitHub Actions and Releases
 
@@ -360,11 +476,12 @@ To update an existing installation to a new version:
 
 **⚠️ Important Update Notes:**
 
-- **Always preserve your session key and salt** - New random values will be generated if not specified, which could make your encrypted data inaccessible
+- **Always preserve your session key and salt** — new random values will be generated if not specified, which would make your encrypted data inaccessible
 - The installer will overwrite the binary, templates, and static files with the new version
 - Your gallery data in `/opt/go_gal/gallery` (or custom directory) will be preserved
 - SSL certificates will be preserved if they exist
 - The systemd service configuration will be updated
+- **After upgrading, run `--migrate`** to re-encrypt your gallery with the improved v2 format (see the Migration section above)
 
 **Quick Update Example:**
 ```bash
@@ -375,6 +492,10 @@ sudo systemctl stop go_gal
 sudo ./install.sh \
   --session-key="abc123xyz789" \
   --salt="def456uvw"
+
+# Migrate gallery to v2 encryption format
+cd /opt/go_gal
+sudo -u go_gal GO_GAL_SALT="def456uvw" ./go_gal --migrate
 
 # Start service
 sudo systemctl start go_gal
