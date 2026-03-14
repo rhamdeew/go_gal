@@ -11,26 +11,42 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/static/images/apple-touch-icon.png" />
     <link rel="manifest" href="/static/images/site.webmanifest" />
 </head>
+<script>
+    (function() {
+        const saved = localStorage.getItem('theme');
+        if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+    })();
+</script>
 <body>
-    <div class="container">
+    <div class="container" style="display: flex; align-items: center; justify-content: center; min-height: 90vh;">
         <div class="login-form">
             <div class="login-header">
                 <img src="/static/images/logo-clean.svg" alt="Go Gallery" class="logo">
                 <h1>Go Gallery</h1>
+                <p>Private encrypted media storage</p>
             </div>
-            <p>Enter password to access your encrypted gallery</p>
 
             {{if .Error}}
-            <div class="error-message">{{.Error}}</div>
+            <div class="error-message">
+                <svg style="margin-right: 12px; flex-shrink: 0;" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                {{.Error}}
+            </div>
             {{end}}
 
             <form action="/login" method="POST">
                 <div class="form-group">
-                    <label for="password">Password</label>
-                    <input type="password" id="password" name="password" required autofocus>
+                    <label for="password">Gallery Password</label>
+                    <input type="password" id="password" name="password" placeholder="••••••••" required autofocus>
                 </div>
-                <button type="submit" class="btn btn-primary">Access Gallery</button>
+                <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 1rem;">
+                    Access My Gallery
+                    <svg style="margin-left: 10px;" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"></path><polyline points="12 5 19 12 12 19"></polyline></svg>
+                </button>
             </form>
+            
+            <div style="margin-top: 2rem; font-size: 0.8rem; color: var(--text-muted); opacity: 0.6;">
+                Files are decrypted on-the-fly and never stored unencrypted.
+            </div>
         </div>
     </div>
 </body>

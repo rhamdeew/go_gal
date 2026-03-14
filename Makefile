@@ -6,7 +6,7 @@
 all: build ## Build the application (default)
 
 build:
-	go build -o go_gal main.go
+	go build -o go_gal .
 
 help: ## Show this help message
 	@echo "Usage: make [target]"

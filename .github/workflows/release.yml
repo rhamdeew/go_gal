@@ -48,7 +48,7 @@ jobs:
           fi
 
           # Build the binary
-          go build -v -o "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" main.go
+          go build -v -o "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" .
 
           # Make sure required directories are copied
           mkdir -p release_dir/templates

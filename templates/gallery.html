@@ -18,13 +18,23 @@
                 <img src="/static/images/logo-clean.svg" alt="Go Gallery" class="logo">
                 <h1>Go Gallery</h1>
             </div>
-            <div class="header-actions">
-                <a href="/logout" class="btn btn-small">Logout</a>
+            <div class="header-actions" style="gap: 0.75rem;">
+                <button id="theme-toggle" class="theme-toggle" title="Toggle theme">
+                    <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"></circle><line x1="12" y1="1" x2="12" y2="3"></line><line x1="12" y1="21" x2="12" y2="23"></line><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line><line x1="1" y1="12" x2="3" y2="12"></line><line x1="21" y1="12" x2="23" y2="12"></line><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line></svg>
+                    <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path></svg>
+                </button>
+                <a href="/logout" class="btn btn-small">
+                    <svg style="margin-right: 8px;" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                    Logout
+                </a>
             </div>
         </header>
 
         {{if .Error}}
-        <div class="error-message">{{.Error}}</div>
+        <div class="error-message">
+            <svg style="margin-right: 12px;" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            {{.Error}}
+        </div>
         {{end}}
 
         <div class="current-path">
@@ -38,27 +48,33 @@
 
         <div class="gallery-controls">
             <div class="upload-section">
-                <h3>Upload Images & Videos</h3>
+                <h3>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                    Upload Media
+                </h3>
                 <div id="drop-area" class="drop-area">
-                    <p>Drag & drop images and videos here or click to select files</p>
+                    <p>Drag & drop media here or</p>
                     <form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data">
                         <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
                         <input type="file" id="file-input" name="files" accept="image/*,video/*" multiple required style="display:none;">
-                        <button type="button" id="select-files-btn" class="btn">Select Files</button>
+                        <button type="button" id="select-files-btn" class="btn">Browse Files</button>
                     </form>
                     <div id="file-list" class="file-list"></div>
-                    <button id="upload-btn" class="btn" style="display:none;">Upload Files</button>
+                    <button id="upload-btn" class="btn" style="display:none; margin-top: 1rem; width: 100%;">Upload Files</button>
                 </div>
             </div>
 
             <div class="create-dir-section">
-                <h3>Create Directory</h3>
+                <h3>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path><line x1="12" y1="11" x2="12" y2="17"></line><line x1="9" y1="14" x2="15" y2="14"></line></svg>
+                    New Folder
+                </h3>
                 <form action="/createdir" method="POST">
                     <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
                     <div class="form-group">
                         <input type="text" name="dirName" placeholder="Directory name" required>
                     </div>
-                    <button type="submit" class="btn">Create</button>
+                    <button type="submit" class="btn" style="width: 100%;">Create Folder</button>
                 </form>
             </div>
         </div>
@@ -66,7 +82,7 @@
         <div class="gallery-items">
             {{if .Items}}
                 {{range .Items}}
-                    <div class="gallery-item">
+                    <div class="gallery-item" title="{{.Name}}">
                         {{if .IsDir}}
                             <a href="/gallery/{{.Path}}" class="folder">
                                 <div class="folder-icon">📁</div>
@@ -76,18 +92,21 @@
                                 <form action="/delete" method="POST" class="delete-form">
                                     <input type="hidden" name="path" value="{{.Path}}">
                                     <input type="hidden" name="currentDir" value="{{$.CurrentPath}}">
-                                    <button type="button" class="delete-btn" title="Delete folder">🗑️</button>
+                                    <button type="button" class="delete-btn" title="Delete folder">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                    </button>
                                 </form>
                             </div>
                         {{else}}
-                            <a href="javascript:void(0);" class="media-item" data-media="/view/{{.Path}}" data-detail="/view/{{.Path}}" data-name="{{.Name}}">
+                            <a href="#" class="media-item" data-media="/view/{{.Path}}" data-detail="/view/{{.Path}}" data-name="{{.Name}}">
                                 <div class="media-preview" data-filename="{{.Name}}">
                                     <div class="image-preview" style="background-image: url('/thumbnail/{{.Path}}')"></div>
-                                    <div class="video-preview" style="display: none;">
-                                        <div class="thumbnail-bg" style="background-image: url('/thumbnail/{{.Path}}'); position: absolute; top: 0; left: 0; right: 0; bottom: 0; opacity: 0.9; z-index: 1;"></div>
-                                        <div class="video-overlay" style="position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;">
-                                            <div class="video-icon">🎬</div>
-                                            <div class="play-overlay">▶️</div>
+                                    <div class="video-preview" style="display: none; position: absolute; inset: 0;">
+                                        <div class="thumbnail-bg" style="background-image: url('/thumbnail/{{.Path}}');"></div>
+                                        <div class="video-overlay" style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; z-index: 2;">
+                                            <div class="play-overlay">
+                                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -97,7 +116,9 @@
                                 <form action="/delete" method="POST" class="delete-form">
                                     <input type="hidden" name="path" value="{{.Path}}">
                                     <input type="hidden" name="currentDir" value="{{$.CurrentPath}}">
-                                    <button type="button" class="delete-btn" title="Delete file">🗑️</button>
+                                    <button type="button" class="delete-btn" title="Delete file">
+                                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line></svg>
+                                    </button>
                                 </form>
                             </div>
                         {{end}}
@@ -105,7 +126,8 @@
                 {{end}}
             {{else}}
                 <div class="empty-gallery">
-                    <p>No items found in this directory</p>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 1rem; opacity: 0.3;"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    <p>Your gallery is empty. Upload some memories!</p>
                 </div>
             {{end}}
         </div>
@@ -116,8 +138,13 @@
         <div class="modal-content">
             <div class="modal-header">
                 <h2 id="modal-media-name"></h2>
-                <a id="detail-link" href="#" target="_blank" class="btn btn-small">View Full Size</a>
-                <span class="close">&times;</span>
+                <div style="display: flex; gap: 1rem; align-items: center;">
+                    <a id="detail-link" href="#" target="_blank" class="btn btn-small">
+                        <svg style="margin-right: 6px;" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+                        Full Size
+                    </a>
+                    <span class="close">&times;</span>
+                </div>
             </div>
             <div class="modal-body">
                 <button id="prev-btn" class="nav-btn prev-btn">&lt;</button>
@@ -131,7 +158,26 @@
     </div>
 
     <script>
+        // Apply saved theme before page renders to avoid flash
+        (function() {
+            const saved = localStorage.getItem('theme');
+            if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+        })();
+
         document.addEventListener('DOMContentLoaded', function() {
+            // Theme toggle
+            const themeToggle = document.getElementById('theme-toggle');
+            themeToggle.addEventListener('click', function() {
+                const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+                if (isLight) {
+                    document.documentElement.removeAttribute('data-theme');
+                    localStorage.setItem('theme', 'dark');
+                } else {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                    localStorage.setItem('theme', 'light');
+                }
+            });
+
             const dropArea = document.getElementById('drop-area');
             const fileInput = document.getElementById('file-input');
             const fileList = document.getElementById('file-list');
@@ -142,10 +188,11 @@
             // Delete button functionality
             const deleteButtons = document.querySelectorAll('.delete-btn');
             deleteButtons.forEach(button => {
-                button.addEventListener('click', function() {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation();
                     const form = this.closest('.delete-form');
                     const isFolder = this.closest('.gallery-item').querySelector('.folder') !== null;
-                    const itemName = this.closest('.gallery-item').querySelector('span').textContent;
+                    const itemName = this.closest('.gallery-item').getAttribute('title');
 
                     if (confirm(`Are you sure you want to delete ${isFolder ? 'folder' : 'file'} "${itemName}"?${isFolder ? ' This will delete all contents inside this folder.' : ''}`)) {
                         form.submit();
@@ -210,7 +257,7 @@
                 const files = fileInput.files;
                 if (files.length > 0) {
                     fileList.innerHTML = '';
-                    uploadBtn.style.display = 'inline-block';
+                    uploadBtn.style.display = 'block';
 
                     Array.from(files).forEach((file, index) => {
                         const fileItem = document.createElement('div');
@@ -339,7 +386,7 @@
 
                     if (isVideo) {
                         imagePreview.style.display = 'none';
-                        videoPreview.style.display = 'flex';
+                        videoPreview.style.display = 'block';
                         preview.closest('.media-item').classList.add('video-item');
                     } else {
                         imagePreview.style.display = 'block';
@@ -381,7 +428,8 @@
 
             // Open the modal and show the clicked media
             document.querySelectorAll('.media-item').forEach((item, index) => {
-                item.addEventListener('click', function() {
+                item.addEventListener('click', function(e) {
+                    e.preventDefault();
                     modal.style.display = 'block';
                     currentIndex = index;
                     showCurrentMedia();
@@ -391,20 +439,30 @@
             // Close the modal
             closeBtn.addEventListener('click', function() {
                 modal.style.display = 'none';
+                modalVideo.pause();
+                modalVideo.src = '';
             });
 
             // Click outside to close
             window.addEventListener('click', function(event) {
                 if (event.target === modal) {
                     modal.style.display = 'none';
+                    modalVideo.pause();
+                    modalVideo.src = '';
                 }
             });
 
             // Navigate to previous media
-            prevBtn.addEventListener('click', showPrevMedia);
+            prevBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                showPrevMedia();
+            });
 
             // Navigate to next media
-            nextBtn.addEventListener('click', showNextMedia);
+            nextBtn.addEventListener('click', function(e) {
+                e.stopPropagation();
+                showNextMedia();
+            });
 
             // Keyboard navigation
             document.addEventListener('keydown', function(event) {
@@ -415,6 +473,8 @@
                         showNextMedia();
                     } else if (event.key === 'Escape') {
                         modal.style.display = 'none';
+                        modalVideo.pause();
+                        modalVideo.src = '';
                     }
                 }
             });
@@ -431,13 +491,17 @@
                     modalImg.src = media.src;
                     modalImg.style.display = 'block';
                     modalVideo.style.display = 'none';
+                    modalVideo.pause();
+                    modalVideo.src = '';
                 } else if (media.type === 'video') {
                     // Show video, hide image
                     modalVideo.src = media.src;
                     modalVideo.style.display = 'block';
                     modalImg.style.display = 'none';
+                    modalImg.src = '';
                     // Reset video to beginning when switching
                     modalVideo.currentTime = 0;
+                    modalVideo.play().catch(e => console.log("Auto-play blocked"));
                 }
 
                 // Show/hide navigation buttons based on available media
