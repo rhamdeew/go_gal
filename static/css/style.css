@@ -366,6 +366,9 @@ input:focus {
     transform: translateY(-10px);
     transition: var(--transition);
     z-index: 20;
+    display: flex;
+    gap: 0.25rem;
+    align-items: center;
 }
 
 .gallery-item:hover .item-actions {
@@ -387,6 +390,32 @@ input:focus {
 .delete-btn:hover {
     background: #ef4444;
     color: white;
+}
+
+.rename-btn, .move-btn {
+    background: rgba(15, 23, 42, 0.8);
+    backdrop-filter: blur(4px);
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    padding: 0.5rem;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: var(--transition);
+    margin-right: 0.25rem;
+}
+
+.rename-btn:hover {
+    background: #3b82f6;
+    color: white;
+}
+
+.move-btn:hover {
+    background: #8b5cf6;
+    color: white;
+}
+
+.item-actions form {
+    display: inline;
 }
 
 .folder, .media-item {
@@ -521,6 +550,40 @@ input:focus {
     background: var(--modal-header-bg);
     border-bottom: 1px solid var(--border);
     padding: 1rem 1.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h2 {
+    margin: 0;
+    font-size: 1.1rem;
+}
+
+.close {
+    font-size: 1.75rem;
+    font-weight: 300;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: var(--transition);
+    line-height: 1;
+}
+
+.close:hover {
+    color: var(--error);
+}
+
+.close-rename, .close-move {
+    font-size: 1.75rem;
+    font-weight: 300;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: var(--transition);
+    line-height: 1;
+}
+
+.close-rename:hover, .close-move:hover {
+    color: var(--error);
 }
 
 .modal-body {

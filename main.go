@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -257,6 +258,9 @@ func main() {
 	r.HandleFunc("/upload", uploadHandler).Methods("POST")
 	r.HandleFunc("/createdir", createDirHandler).Methods("POST")
 	r.HandleFunc("/delete", deleteHandler).Methods("POST")
+	r.HandleFunc("/rename", renameHandler).Methods("POST")
+	r.HandleFunc("/move", moveHandler).Methods("POST")
+	r.HandleFunc("/api/directories", getDirectoriesHandler).Methods("GET")
 	r.HandleFunc("/view/{path:.*}", viewHandler)
 	r.HandleFunc("/thumbnail/{path:.*}", thumbnailHandler)
 	r.HandleFunc("/logout", logoutHandler)
@@ -1833,6 +1837,418 @@ func deleteHandler(w http.ResponseWriter, r *http.Request) {
 	redirectPath := validateRedirectPath(cleanDir)
 
 	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
+}
+
+// renameHandler handles renaming of files and directories
+func renameHandler(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in renameHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in renameHandler: ok=%v, auth=%v", ok, auth)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	passwordHash, ok := session.Values["password_hash"].(string)
+	if !ok {
+		log.Printf("Failed to retrieve password hash from session in renameHandler")
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// Get the path and new name
+	itemPath := r.FormValue("path")
+	newName := r.FormValue("newName")
+	currentDir := r.FormValue("currentDir")
+
+	if itemPath == "" || newName == "" {
+		http.Error(w, "Path and new name are required", http.StatusBadRequest)
+		return
+	}
+
+	if currentDir == "" {
+		currentDir = "/"
+	}
+
+	// Validate new name - no special characters, not empty
+	if strings.ContainsAny(newName, "/\\<>:\"|?*") {
+		http.Error(w, "Invalid characters in new name", http.StatusBadRequest)
+		return
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(itemPath, "..") || strings.Contains(currentDir, "..") || strings.Contains(newName, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize the item path
+	cleanItemPath := filepath.FromSlash(filepath.Clean("/" + strings.Trim(itemPath, "/")))
+	cleanItemPath = strings.Replace(cleanItemPath, "\\", "/", -1)
+	if cleanItemPath != "/" && strings.HasPrefix(cleanItemPath, "/") {
+		cleanItemPath = cleanItemPath[1:]
+	}
+
+	// Sanitize current directory
+	cleanDir := filepath.FromSlash(filepath.Clean("/" + strings.Trim(currentDir, "/")))
+	cleanDir = strings.Replace(cleanDir, "\\", "/", -1)
+	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
+		cleanDir = cleanDir[1:]
+	}
+
+	// Validate full path
+	fullPath := filepath.Join(galleryDir, cleanItemPath)
+	if !strings.HasPrefix(fullPath, galleryDir) {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Check if item exists
+	info, err := os.Stat(fullPath)
+	if os.IsNotExist(err) {
+		http.Error(w, "Item does not exist", http.StatusNotFound)
+		return
+	}
+
+	// Get the encrypted filename from the path
+	encFileName := filepath.Base(fullPath)
+	if !strings.HasSuffix(encFileName, encryptedExt) {
+		encFileName += encryptedExt
+	}
+
+	// Decrypt the current filename to verify password
+	encNameWithoutExt := strings.TrimSuffix(encFileName, encryptedExt)
+	_, err = decryptFileName(encNameWithoutExt, passwordHash)
+	if err != nil {
+		http.Error(w, "Failed to decrypt filename - incorrect password", http.StatusBadRequest)
+		return
+	}
+
+	// Encrypt the new name
+	newEncName, err := encryptFileName(newName, passwordHash)
+	if err != nil {
+		http.Error(w, "Failed to encrypt new name", http.StatusInternalServerError)
+		return
+	}
+	newEncName += encryptedExt
+
+	// Construct new paths
+	dirPath := filepath.Dir(fullPath)
+	newFullPath := filepath.Join(dirPath, newEncName)
+
+	// Check if new name already exists
+	if _, err := os.Stat(newFullPath); err == nil {
+		http.Error(w, "An item with this name already exists", http.StatusBadRequest)
+		return
+	}
+
+	// Rename the main file/directory
+	if err := os.Rename(fullPath, newFullPath); err != nil {
+		log.Printf("Failed to rename item: %v", err)
+		http.Error(w, "Failed to rename item", http.StatusInternalServerError)
+		return
+	}
+
+	// Rename the thumbnail if it exists
+	if !info.IsDir() {
+		thumbnailPath := filepath.Join(thumbnailsDir, cleanItemPath)
+		if !strings.HasSuffix(thumbnailPath, encryptedExt) {
+			thumbnailPath += encryptedExt
+		}
+		if strings.HasPrefix(thumbnailPath, thumbnailsDir) {
+			if _, err := os.Stat(thumbnailPath); err == nil {
+				newThumbnailPath := filepath.Join(thumbnailsDir, filepath.Join(filepath.Dir(cleanItemPath), newEncName))
+				if err := os.Rename(thumbnailPath, newThumbnailPath); err != nil {
+					log.Printf("Warning: Failed to rename thumbnail: %v", err)
+				}
+			}
+		}
+	} else {
+		// For directories, rename the entire thumbnail directory
+		thumbnailDirPath := filepath.Join(thumbnailsDir, cleanItemPath)
+		if strings.HasPrefix(thumbnailDirPath, thumbnailsDir) {
+			if _, err := os.Stat(thumbnailDirPath); err == nil {
+				newThumbnailDirPath := filepath.Join(thumbnailsDir, filepath.Join(filepath.Dir(cleanItemPath), newEncName))
+				if err := os.Rename(thumbnailDirPath, newThumbnailDirPath); err != nil {
+					log.Printf("Warning: Failed to rename thumbnail directory: %v", err)
+				}
+			}
+		}
+	}
+
+	redirectPath := validateRedirectPath(cleanDir)
+	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
+}
+
+// moveHandler handles moving files and directories to a different location
+func moveHandler(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		log.Printf("Failed to get session in moveHandler: %v", err)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		log.Printf("Authentication failed in moveHandler: ok=%v, auth=%v", ok, auth)
+		http.Redirect(w, r, "/", http.StatusSeeOther)
+		return
+	}
+
+	// Get the source path, target directory, and current directory
+	sourcePath := r.FormValue("sourcePath")
+	targetDir := r.FormValue("targetDir")
+	currentDir := r.FormValue("currentDir")
+
+	if sourcePath == "" {
+		http.Error(w, "Source path is required", http.StatusBadRequest)
+		return
+	}
+
+	if currentDir == "" {
+		currentDir = "/"
+	}
+
+	// Check for path traversal attempts
+	if strings.Contains(sourcePath, "..") || strings.Contains(currentDir, "..") || strings.Contains(targetDir, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Sanitize source path
+	cleanSourcePath := filepath.FromSlash(filepath.Clean("/" + strings.Trim(sourcePath, "/")))
+	cleanSourcePath = strings.Replace(cleanSourcePath, "\\", "/", -1)
+	if cleanSourcePath != "/" && strings.HasPrefix(cleanSourcePath, "/") {
+		cleanSourcePath = cleanSourcePath[1:]
+	}
+
+	// Sanitize current directory
+	cleanDir := filepath.FromSlash(filepath.Clean("/" + strings.Trim(currentDir, "/")))
+	cleanDir = strings.Replace(cleanDir, "\\", "/", -1)
+	if cleanDir != "/" && strings.HasPrefix(cleanDir, "/") {
+		cleanDir = cleanDir[1:]
+	}
+
+	// Sanitize target directory
+	cleanTargetDir := filepath.FromSlash(filepath.Clean("/" + strings.Trim(targetDir, "/")))
+	cleanTargetDir = strings.Replace(cleanTargetDir, "\\", "/", -1)
+	if cleanTargetDir != "/" && strings.HasPrefix(cleanTargetDir, "/") {
+		cleanTargetDir = cleanTargetDir[1:]
+	}
+
+	// Validate source path
+	fullSourcePath := filepath.Join(galleryDir, cleanSourcePath)
+	if !strings.HasPrefix(fullSourcePath, galleryDir) {
+		http.Error(w, "Invalid source path", http.StatusBadRequest)
+		return
+	}
+
+	// Check if source exists
+	info, err := os.Stat(fullSourcePath)
+	if os.IsNotExist(err) {
+		http.Error(w, "Source item does not exist", http.StatusNotFound)
+		return
+	}
+
+	// Validate target directory path
+	fullTargetDir := filepath.Join(galleryDir, cleanTargetDir)
+	if !strings.HasPrefix(fullTargetDir, galleryDir) {
+		http.Error(w, "Invalid target directory", http.StatusBadRequest)
+		return
+	}
+
+	// Check if target is a directory
+	targetInfo, err := os.Stat(fullTargetDir)
+	if os.IsNotExist(err) || !targetInfo.IsDir() {
+		http.Error(w, "Target directory does not exist", http.StatusBadRequest)
+		return
+	}
+
+	// Prevent moving a directory into itself or its subdirectories
+	if info.IsDir() {
+		if strings.HasPrefix(cleanTargetDir, cleanSourcePath+"/") || cleanTargetDir == cleanSourcePath {
+			http.Error(w, "Cannot move a directory into itself or its subdirectories", http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Get the encrypted filename from the source path
+	encFileName := filepath.Base(fullSourcePath)
+
+	// Construct new path in target directory
+	newFullPath := filepath.Join(fullTargetDir, encFileName)
+
+	// Check if item with same name already exists in target
+	if _, err := os.Stat(newFullPath); err == nil {
+		http.Error(w, "An item with this name already exists in the target directory", http.StatusBadRequest)
+		return
+	}
+
+	// Move the main file/directory
+	if err := os.Rename(fullSourcePath, newFullPath); err != nil {
+		log.Printf("Failed to move item: %v", err)
+		http.Error(w, "Failed to move item", http.StatusInternalServerError)
+		return
+	}
+
+	// Move the thumbnail if it exists
+	if !info.IsDir() {
+		thumbnailSourcePath := filepath.Join(thumbnailsDir, cleanSourcePath)
+		if !strings.HasSuffix(thumbnailSourcePath, encryptedExt) {
+			thumbnailSourcePath += encryptedExt
+		}
+		if strings.HasPrefix(thumbnailSourcePath, thumbnailsDir) {
+			if _, err := os.Stat(thumbnailSourcePath); err == nil {
+				thumbnailTargetPath := filepath.Join(thumbnailsDir, cleanTargetDir, encFileName)
+				// Ensure parent directory exists
+				if err := os.MkdirAll(filepath.Dir(thumbnailTargetPath), 0755); err != nil {
+					log.Printf("Warning: Failed to create thumbnail directory: %v", err)
+				}
+				if err := os.Rename(thumbnailSourcePath, thumbnailTargetPath); err != nil {
+					log.Printf("Warning: Failed to move thumbnail: %v", err)
+				}
+			}
+		}
+	} else {
+		// For directories, move the entire thumbnail directory
+		thumbnailSourceDir := filepath.Join(thumbnailsDir, cleanSourcePath)
+		if strings.HasPrefix(thumbnailSourceDir, thumbnailsDir) {
+			if _, err := os.Stat(thumbnailSourceDir); err == nil {
+				thumbnailTargetDirPath := filepath.Join(thumbnailsDir, cleanTargetDir, encFileName)
+				// Ensure parent directory exists
+				if err := os.MkdirAll(filepath.Dir(thumbnailTargetDirPath), 0755); err != nil {
+					log.Printf("Warning: Failed to create thumbnail directory: %v", err)
+				}
+				if err := os.Rename(thumbnailSourceDir, thumbnailTargetDirPath); err != nil {
+					log.Printf("Warning: Failed to move thumbnail directory: %v", err)
+				}
+			}
+		}
+	}
+
+	redirectPath := validateRedirectPath(cleanDir)
+	http.Redirect(w, r, redirectPath, http.StatusSeeOther)
+}
+
+// getDirectoriesHandler returns a list of all directories for the move operation
+func getDirectoriesHandler(w http.ResponseWriter, r *http.Request) {
+	session, err := store.Get(r, "gallery-session")
+	if err != nil {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	if auth, ok := session.Values["authenticated"].(bool); !ok || !auth {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	passwordHash, ok := session.Values["password_hash"].(string)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	// Get current item path to exclude it and its subdirectories
+	itemPath := r.URL.Query().Get("itemPath")
+
+	// Recursively get all directories
+	directories := []map[string]string{}
+	err = filepath.Walk(galleryDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if !info.IsDir() {
+			return nil
+		}
+		if path == galleryDir {
+			return nil // Skip root gallery directory
+		}
+
+		// Get relative path from gallery directory
+		relPath, err := filepath.Rel(galleryDir, path)
+		if err != nil {
+			return nil
+		}
+		relPath = strings.Replace(relPath, "\\", "/", -1)
+
+		// Decrypt the directory name
+		encName := info.Name()
+		if strings.HasSuffix(encName, encryptedExt) {
+			encNameWithoutExt := strings.TrimSuffix(encName, encryptedExt)
+			decryptedName, err := decryptFileName(encNameWithoutExt, passwordHash)
+			if err != nil {
+				return nil
+			}
+
+			// Build the full display path with parent directories
+			displayPath := "/" + decryptedName
+			if filepath.Dir(relPath) != "." {
+				// Need to build the full path with decrypted parent names
+				parentPath := filepath.Dir(relPath)
+				decryptedParentPath := ""
+				segments := strings.Split(parentPath, "/")
+				for _, seg := range segments {
+					if seg == "" {
+						continue
+					}
+					encSeg := seg
+					if !strings.HasSuffix(encSeg, encryptedExt) {
+						encSeg += encryptedExt
+					}
+					encSegWithoutExt := strings.TrimSuffix(encSeg, encryptedExt)
+					decSeg, err := decryptFileName(encSegWithoutExt, passwordHash)
+					if err != nil {
+						return nil
+					}
+					if decryptedParentPath == "" {
+						decryptedParentPath = decSeg
+					} else {
+						decryptedParentPath += "/" + decSeg
+					}
+				}
+				if decryptedParentPath != "" {
+					displayPath = "/" + decryptedParentPath + displayPath
+				}
+			}
+
+			// Skip if this is the item being moved or its subdirectory
+			if itemPath != "" {
+				cleanItemPath := strings.TrimSuffix(strings.Trim(itemPath, "/"), encryptedExt)
+				encItemPath := strings.TrimSuffix(itemPath, "/")
+				if strings.HasPrefix(relPath, cleanItemPath+"/") || relPath == cleanItemPath {
+					return nil
+				}
+				if strings.HasPrefix(relPath, encItemPath+"/") || relPath == encItemPath {
+					return nil
+				}
+			}
+
+			directories = append(directories, map[string]string{
+				"path":        relPath,
+				"displayName": displayPath,
+			})
+		}
+		return nil
+	})
+
+	if err != nil {
+		http.Error(w, "Failed to list directories", http.StatusInternalServerError)
+		return
+	}
+
+	// Add root directory option at the beginning
+	directories = append([]map[string]string{
+		{"path": "", "displayName": "/ (Root)"},
+	}, directories...)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(directories)
 }
 
 // logoutHandler logs the user out
