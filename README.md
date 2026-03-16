@@ -142,16 +142,19 @@ export GO_GAL_SALT="your-random-secure-salt"
 
 2. Extract the archive:
    ```bash
-   tar -xzvf go_gal_linux_amd64.tar.gz
-   cd go_gal_linux_amd64
+   mkdir go_gal && tar -xzvf go_gal_linux_amd64.tar.gz -C go_gal
+   cd go_gal
    ```
 
 3. Run the installation script:
    ```bash
-   sudo ./install.sh
+   sudo ./install.sh --session-key="your-random-secure-key" --salt="your-random-secure-salt"
    ```
 
-   The script creates a `gogal` system user, installs everything to `/opt/go_gal`, and registers a systemd service.
+   The script creates a `gogal` system user, installs everything to `/opt/go_gal`, and registers a systemd service. If `--session-key` and `--salt` are omitted, random values are generated automatically and written into the systemd unit file — you can retrieve them later with:
+   ```bash
+   sudo grep -E "GO_GAL_(SESSION_KEY|SALT)" /etc/systemd/system/go_gal.service
+   ```
 
 4. Start and enable the service:
    ```bash
@@ -422,8 +425,8 @@ The application can be installed as a systemd service for automatic startup and 
 
 1. Download the release archive for your platform from the [Releases page](https://github.com/rhamdeew/go_gal/releases) and extract it:
    ```bash
-   tar -xzvf go_gal_linux_amd64.tar.gz
-   cd go_gal_linux_amd64
+   mkdir go_gal && tar -xzvf go_gal_linux_amd64.tar.gz -C go_gal
+   cd go_gal
    ```
 
 2. Run the installation script:
