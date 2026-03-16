@@ -26,7 +26,7 @@ A password-protected web gallery application written in Go. All folders and file
 - Image and video preview before uploading
 - Modern and responsive UI with unified media gallery
 - No server-side password storage for enhanced security
-- HTTPS support with self-signed certificates
+- HTTPS support: self-signed certificates or automatic TLS via **Let's Encrypt** (ACME)
 
 ## Thumbnail System
 
@@ -93,7 +93,7 @@ For video thumbnail generation, FFmpeg must be installed:
 - Session-based authentication with secure cookies (HttpOnly, SameSite)
 - Cookie is fully deleted on logout (MaxAge=-1)
 - Login rate limiting: 10 attempts per 15-minute window per IP
-- Optional HTTPS with TLS 1.2+ and TLS private key stored with restricted permissions (0600)
+- Optional HTTPS with TLS 1.2+ — self-signed certificates or automatic Let's Encrypt via ACME
 - Security response headers: `X-Frame-Options`, `X-Content-Type-Options`, `Content-Security-Policy`, `Referrer-Policy`, `Strict-Transport-Security` (when SSL enabled)
 - Protection against directory traversal attacks
 - Environment variable configuration for sensitive values
@@ -148,10 +148,15 @@ export GO_GAL_SALT="your-random-secure-salt"
 
 3. Run the installation script:
    ```bash
-   sudo ./install.sh --session-key="your-random-secure-key" --salt="your-random-secure-salt"
+   sudo ./install.sh
    ```
 
-   The script creates a `gogal` system user, installs everything to `/opt/go_gal`, and registers a systemd service. If `--session-key` and `--salt` are omitted, random values are generated automatically and written into the systemd unit file — you can retrieve them later with:
+   The script is interactive and will ask you:
+   - **Session key** and **salt** for encryption (press Enter to generate random values)
+   - **Host** and **port** to bind to
+   - **SSL/TLS mode**: HTTP only, manual certificates, or automatic Let's Encrypt
+
+   It creates a `gogal` system user, installs everything to `/opt/go_gal`, and registers a systemd service. You can retrieve the generated keys any time with:
    ```bash
    sudo grep -E "GO_GAL_(SESSION_KEY|SALT)" /etc/systemd/system/go_gal.service
    ```
@@ -229,17 +234,26 @@ sudo ./install.sh
 
    To enable HTTPS with self-signed certificates:
    ```
-   ./go_gal --ssl=true
+   ./go_gal --ssl
+   ```
+
+   To enable automatic HTTPS via Let's Encrypt (requires a public domain and ports 80/443):
+   ```
+   ./go_gal --acme --acme-domain=example.com --acme-email=me@example.com
    ```
 
    Available command line arguments:
    ```
-   --host=<ip>       : Specify the host IP address (default: 127.0.0.1)
-   --port=<number>   : Specify the port number (default: 8080)
-   --ssl=true/false  : Enable HTTPS with self-signed certificates (default: false)
-   --cert=<path>     : Specify a custom path for the SSL certificate (default: cert.pem)
-   --key=<path>      : Specify a custom path for the SSL private key (default: key.pem)
-   --migrate         : Migrate gallery files from v1 to v2 encryption format (see Migration section)
+   --host=<ip>            Host IP address to bind to (default: localhost)
+   --port=<number>        Port number (default: 8080)
+   --ssl                  Enable HTTPS with self-signed certificates
+   --cert=<path>          Path to SSL certificate file (default: cert.pem)
+   --key=<path>           Path to SSL private key file (default: key.pem)
+   --acme                 Enable automatic HTTPS via Let's Encrypt
+   --acme-domain=<host>   Domain name for the Let's Encrypt certificate (required with --acme)
+   --acme-email=<email>   Email address for Let's Encrypt notifications
+   --acme-cache=<dir>     Directory to cache Let's Encrypt certificates (default: acme-cache)
+   --migrate              Migrate gallery files from v1 to v2 encryption format
    ```
 
 2. Open your web browser and go to:
@@ -347,23 +361,24 @@ rm -rf gallery_backup/ thumbnails_backup/
 If running as a systemd service, the full update sequence is:
 
 ```bash
-# 1. Stop service
+# 1. Get your existing keys
+sudo grep -E "GO_GAL_(SESSION_KEY|SALT)" /etc/systemd/system/go_gal.service
+
+# 2. Stop service
 sudo systemctl stop go_gal
 
-# 2. Backup gallery data
+# 3. Backup gallery data
 cp -r /opt/go_gal/gallery /opt/go_gal/gallery_backup
 cp -r /opt/go_gal/thumbnails /opt/go_gal/thumbnails_backup
 
-# 3. Install new binary (preserve existing keys)
-sudo ./install.sh \
-  --session-key="your_existing_session_key" \
-  --salt="your_existing_salt"
+# 4. Run installer (enter the existing keys when prompted to preserve access)
+sudo ./install.sh
 
-# 4. Run migration as the service user
+# 5. Run migration as the service user
 cd /opt/go_gal
-sudo -u go_gal GO_GAL_SALT="your_existing_salt" ./go_gal --migrate
+sudo -u gogal GO_GAL_SALT="your_existing_salt" ./go_gal --migrate
 
-# 5. Start service
+# 6. Start service
 sudo systemctl start go_gal
 ```
 
@@ -375,10 +390,10 @@ sudo systemctl start go_gal
 - File integrity is verified with HMAC-SHA256 on every read, detecting tampering or corruption.
 - When using self-signed certificates, your browser may show a security warning. You can safely proceed for personal use.
 - **Security Best Practices:**
-  - For production or internet-facing deployments, always use HTTPS (`--ssl=true`)
+  - For production or internet-facing deployments, always use HTTPS — prefer `--acme` (Let's Encrypt) for trusted certificates, or `--ssl` for self-signed
   - Always set `GO_GAL_SESSION_KEY` and `GO_GAL_SALT` to strong, random values in production
   - Run the `--migrate` command after upgrading from an older version to use the strongest available encryption
-  - Consider running behind a reverse proxy (nginx, Caddy) for additional security and proper TLS certificates
+  - If running behind a reverse proxy (nginx, Caddy), let the proxy handle TLS and run go_gal on HTTP internally
   - Use a strong, unique password — Argon2id makes brute force expensive, but a strong password is still the primary defence
 
 ## GitHub Actions and Releases
@@ -434,6 +449,24 @@ The application can be installed as a systemd service for automatic startup and 
    sudo ./install.sh
    ```
 
+   The script is interactive and will prompt you for:
+
+   | Prompt | Description | Default |
+   |--------|-------------|---------|
+   | Session key | Cookie encryption key | Random generated |
+   | Salt | Password hashing salt | Random generated |
+   | Host | IP address to bind to | `0.0.0.0` |
+   | Port | Port to listen on | `8080` |
+   | SSL mode | `1` HTTP only / `2` Manual cert+key / `3` Let's Encrypt | `1` |
+
+   **SSL mode 2** asks for paths to your certificate and key files.
+
+   **SSL mode 3** asks for:
+   - Domain name (e.g. `example.com`) — must point to this server
+   - Email for Let's Encrypt notifications
+
+   > When using Let's Encrypt the service binds to ports **80** and **443**. Make sure these ports are open in your firewall.
+
    The script creates a `gogal` system user, copies the binary, templates, and static files to `/opt/go_gal`, and registers a systemd service.
 
 3. Start and enable the service:
@@ -441,26 +474,6 @@ The application can be installed as a systemd service for automatic startup and 
    sudo systemctl start go_gal
    sudo systemctl enable go_gal
    ```
-
-### Configuration Options
-
-You can pass the following options to the installation script:
-
-| Option              | Description                   | Default          |
-|---------------------|-------------------------------|------------------|
-| `--dir=DIR`         | Installation directory        | `/opt/go_gal`    |
-| `--port=PORT`       | Port to listen on             | `8080`           |
-| `--host=HOST`       | Host IP to bind to            | `0.0.0.0`        |
-| `--enable-ssl`      | Enable SSL/TLS                | Disabled         |
-| `--cert=FILE`       | SSL certificate file          | `cert.pem`       |
-| `--key=FILE`        | SSL key file                  | `key.pem`        |
-| `--session-key=KEY` | Custom session encryption key | Random generated |
-| `--salt=SALT`       | Custom password hashing salt  | Random generated |
-
-Example:
-```
-sudo ./install.sh --port=9000 --enable-ssl --session-key="my-secure-key"
-```
 
 ### Managing the Service
 
@@ -525,12 +538,9 @@ To update an existing installation to a new version:
 
 3. **Download the new version** from the [Releases page](https://github.com/rhamdeew/go_gal/releases).
 
-4. **Run the installer with your existing keys:**
+4. **Run the installer** and enter your existing session key and salt when prompted (retrieved in step 2):
    ```bash
-   sudo ./install.sh \
-     --session-key="your_existing_session_key" \
-     --salt="your_existing_salt" \
-     [other_options_as_needed]
+   sudo ./install.sh
    ```
 
 5. **Start the service:**
@@ -549,18 +559,19 @@ To update an existing installation to a new version:
 
 **Quick Update Example:**
 ```bash
-# Stop service
+# 1. Get your existing keys
+sudo grep -E "GO_GAL_(SESSION_KEY|SALT)" /etc/systemd/system/go_gal.service
+
+# 2. Stop service
 sudo systemctl stop go_gal
 
-# Update with preserved keys (replace with your actual values)
-sudo ./install.sh \
-  --session-key="abc123xyz789" \
-  --salt="def456uvw"
+# 3. Run installer (enter the keys retrieved above when prompted)
+sudo ./install.sh
 
-# Migrate gallery to v2 encryption format
+# 4. Migrate gallery to v2 encryption format
 cd /opt/go_gal
-sudo -u go_gal GO_GAL_SALT="def456uvw" ./go_gal --migrate
+sudo -u gogal GO_GAL_SALT="your_existing_salt" ./go_gal --migrate
 
-# Start service
+# 5. Start service
 sudo systemctl start go_gal
 ```
