@@ -40,6 +40,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
 	"github.com/nfnt/resize"
+	"golang.org/x/crypto/acme/autocert"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/image/webp"
 )
@@ -206,6 +207,10 @@ func main() {
 	enableSSL := flag.Bool("ssl", false, "Enable HTTPS with self-signed certificates")
 	certFile := flag.String("cert", "cert.pem", "Path to SSL certificate file")
 	keyFile := flag.String("key", "key.pem", "Path to SSL key file")
+	enableACME := flag.Bool("acme", false, "Enable automatic HTTPS via Let's Encrypt")
+	acmeEmail := flag.String("acme-email", "", "Email address for Let's Encrypt notifications")
+	acmeDomain := flag.String("acme-domain", "", "Domain name for Let's Encrypt certificate")
+	acmeCacheDir := flag.String("acme-cache", "acme-cache", "Directory to cache Let's Encrypt certificates")
 	migrate := flag.Bool("migrate", false, "Migrate gallery files from v1 to v2 encryption format")
 	flag.Parse()
 
@@ -225,7 +230,7 @@ func main() {
 	}
 
 	// Set SSL environment variable based on command-line flag
-	if *enableSSL {
+	if *enableSSL || *enableACME {
 		if err := os.Setenv("GO_GAL_SSL_ENABLED", "true"); err != nil {
 			log.Printf("Warning: Failed to set GO_GAL_SSL_ENABLED environment variable: %v", err)
 		}
@@ -281,7 +286,53 @@ func main() {
 	serverAddr := fmt.Sprintf("%s:%s", *host, *port)
 
 	// Start the server
-	if *enableSSL {
+	if *enableACME {
+		if *acmeDomain == "" {
+			log.Fatal("--acme-domain is required when using Let's Encrypt")
+		}
+
+		// Create ACME cache directory
+		if err := os.MkdirAll(*acmeCacheDir, 0700); err != nil {
+			log.Fatalf("Failed to create ACME cache directory: %v", err)
+		}
+
+		m := &autocert.Manager{
+			Cache:      autocert.DirCache(*acmeCacheDir),
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(*acmeDomain),
+			Email:      *acmeEmail,
+		}
+
+		// HTTP server on port 80 for ACME HTTP-01 challenge and redirect
+		httpServer := &http.Server{
+			Addr:              ":80",
+			Handler:           m.HTTPHandler(nil),
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+		go func() {
+			log.Println("Starting HTTP server on :80 for Let's Encrypt challenge")
+			if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				log.Printf("HTTP challenge server error: %v", err)
+			}
+		}()
+
+		tlsConfig := m.TLSConfig()
+		tlsConfig.MinVersion = tls.VersionTLS12
+
+		server := &http.Server{
+			Addr:              ":443",
+			Handler:           securityHeaders(r),
+			TLSConfig:         tlsConfig,
+			ReadTimeout:       30 * time.Minute,
+			WriteTimeout:      30 * time.Minute,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       60 * time.Second,
+		}
+
+		fmt.Printf("Server started with HTTPS (Let's Encrypt) at https://%s\n", *acmeDomain)
+		log.Fatal(server.ListenAndServeTLS("", ""))
+	} else if *enableSSL {
 		// Check if certificate files exist, if not generate them
 		_, err1 := os.Stat(*certFile)
 		_, err2 := os.Stat(*keyFile)
