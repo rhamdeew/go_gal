@@ -127,33 +127,90 @@ export GO_GAL_SALT="your-random-secure-salt"
 
 ## Requirements
 
-- Go 1.18 or higher
 - FFmpeg (optional, for video thumbnail generation)
+- Go 1.23+ (only if building from source)
 
 ## Installation
 
-1. Clone this repository:
-   ```
-   git clone https://github.com/rhamdeew/go_gal.git
-   cd go_gal
+### Linux / macOS
+
+1. Download the latest release archive for your platform from the [Releases page](https://github.com/rhamdeew/go_gal/releases):
+   - `go_gal_linux_amd64.tar.gz` — Linux x86-64
+   - `go_gal_linux_arm64.tar.gz` — Linux ARM64 (Raspberry Pi, etc.)
+   - `go_gal_darwin_amd64.tar.gz` — macOS Intel
+   - `go_gal_darwin_arm64.tar.gz` — macOS Apple Silicon
+
+2. Extract the archive:
+   ```bash
+   tar -xzvf go_gal_linux_amd64.tar.gz
+   cd go_gal_linux_amd64
    ```
 
-2. Download the necessary dependencies:
-   ```
-   go mod download
-   ```
-
-3. Build the application:
-   ```
-   go build -o go_gal
-   ```
-
-4. Run the installation script included in the release:
-   ```
+3. Run the installation script:
+   ```bash
    sudo ./install.sh
    ```
 
-   The script will automatically detect and use any binary matching the pattern `go_gal*` in the current directory and create the necessary directories (gallery and thumbnails).
+   The script creates a `gogal` system user, installs everything to `/opt/go_gal`, and registers a systemd service.
+
+4. Start and enable the service:
+   ```bash
+   sudo systemctl start go_gal
+   sudo systemctl enable go_gal
+   ```
+
+5. Open `http://<your-server>:8080` in a browser and set your gallery password.
+
+### Windows
+
+1. Download `go_gal_windows_amd64.zip` from the [Releases page](https://github.com/rhamdeew/go_gal/releases).
+
+2. Extract the archive to a folder, e.g. `C:\go_gal\`.
+
+3. Open **PowerShell** and run the application:
+   ```powershell
+   cd C:\go_gal
+   .\go_gal.exe --host=0.0.0.0 --port=8080
+   ```
+
+4. Open `http://localhost:8080` in a browser.
+
+#### Running as a Windows Service (optional)
+
+Use [NSSM](https://nssm.cc/download) to install go_gal as a background service:
+
+```powershell
+# Install NSSM, then:
+nssm install go_gal "C:\go_gal\go_gal.exe"
+# In the NSSM GUI set the working directory to C:\go_gal
+nssm start go_gal
+```
+
+#### Environment variables on Windows
+
+Set these before starting the application (recommended for production):
+
+```powershell
+$env:GO_GAL_SESSION_KEY = "your-random-secure-key"
+$env:GO_GAL_SALT        = "your-random-secure-salt"
+.\go_gal.exe --host=0.0.0.0 --port=8080
+```
+
+#### FFmpeg for video thumbnails (Windows)
+
+Download FFmpeg from [ffmpeg.org](https://ffmpeg.org/download.html) and add `ffmpeg.exe` to your `PATH`.
+
+### Building from Source
+
+Requires Go 1.23+:
+
+```bash
+git clone https://github.com/rhamdeew/go_gal.git
+cd go_gal
+go mod download
+go build -o go_gal .
+sudo ./install.sh
+```
 
 ## Usage
 
@@ -363,17 +420,21 @@ The application can be installed as a systemd service for automatic startup and 
 
 ### Installation
 
-1. Download the appropriate binary for your platform from the [Releases page](https://github.com/rhamdeew/go_gal/releases).
-
-2. Run the installation script included in the release:
+1. Download the release archive for your platform from the [Releases page](https://github.com/rhamdeew/go_gal/releases) and extract it:
+   ```bash
+   tar -xzvf go_gal_linux_amd64.tar.gz
+   cd go_gal_linux_amd64
    ```
+
+2. Run the installation script:
+   ```bash
    sudo ./install.sh
    ```
 
-   The script will automatically detect and use any binary matching the pattern `go_gal*` in the current directory and create the necessary directories (gallery and thumbnails).
+   The script creates a `gogal` system user, copies the binary, templates, and static files to `/opt/go_gal`, and registers a systemd service.
 
 3. Start and enable the service:
-   ```
+   ```bash
    sudo systemctl start go_gal
    sudo systemctl enable go_gal
    ```

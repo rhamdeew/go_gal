@@ -6,19 +6,9 @@ on:
       - 'v*' # Run workflow on version tags, e.g. v1.0.0
 
 jobs:
-  build:
-    name: Build and Release
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        # Build for major platforms (Windows, macOS, Linux)
-        goos: [linux, windows, darwin]
-        goarch: [amd64, arm64]
-        exclude:
-          # Exclude some combinations that don't need to be built
-          - goos: windows
-            goarch: arm64
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -26,7 +16,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23.x' # Match the version used in go.mod
+          go-version: '1.23.x'
           check-latest: true
 
       - name: Get dependencies
@@ -35,51 +25,76 @@ jobs:
       - name: Run tests
         run: go test -v ./...
 
-      - name: Build binary
+  build:
+    name: Build (${{ matrix.goos }}/${{ matrix.goarch }})
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          check-latest: true
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build distribution package
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
         run: |
-          # Determine the file extension based on OS
+          ARCHIVE_NAME="go_gal_${{ matrix.goos }}_${{ matrix.goarch }}"
+
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            EXTENSION=".exe"
+            BINARY="go_gal.exe"
           else
-            EXTENSION=""
+            BINARY="go_gal"
           fi
 
           # Build the binary
-          go build -v -o "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" .
+          go build -v -ldflags="-s -w" -o "dist/${BINARY}" .
 
-          # Make sure required directories are copied
-          mkdir -p release_dir/templates
-          mkdir -p release_dir/static
-          cp -r templates/* release_dir/templates/
-          cp -r static/* release_dir/static/
-          cp "go_gal_${{ matrix.goos }}_${{ matrix.goarch }}${EXTENSION}" release_dir/
+          # Copy required runtime files
+          cp -r templates dist/
+          cp -r static dist/
 
-          # Copy install and uninstall scripts to all releases
-          cp install.sh release_dir/
-          cp uninstall.sh release_dir/
-
-          # Copy systemd service file for Linux builds
-          if [ "${{ matrix.goos }}" = "linux" ]; then
-            cp go_gal.service release_dir/
-          fi
-
-          # Create a zip archive
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            cd release_dir && zip -r "../go_gal_${{ matrix.goos }}_${{ matrix.goarch }}.zip" .
+            # Windows: include a plain-text install guide
+            cp INSTALL_WINDOWS.txt dist/INSTALL.txt
+            cd dist && zip -r "../${ARCHIVE_NAME}.zip" .
           else
-            cd release_dir && tar -czvf "../go_gal_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz" .
+            # Linux/macOS: include install and uninstall scripts
+            cp install.sh dist/
+            cp uninstall.sh dist/
+            if [ "${{ matrix.goos }}" = "linux" ]; then
+              cp go_gal.service dist/
+            fi
+            cd dist && tar -czvf "../${ARCHIVE_NAME}.tar.gz" .
           fi
 
-      - name: Upload artifacts
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: go_gal_${{ matrix.goos }}_${{ matrix.goarch }}
-          path: |
-            go_gal_${{ matrix.goos }}_${{ matrix.goarch }}*.*
-            go_gal_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: go_gal_${{ matrix.goos }}_${{ matrix.goarch }}.*
           if-no-files-found: error
 
   release:
@@ -102,7 +117,6 @@ jobs:
         run: find artifacts -type f | sort
 
       - name: Create Release
-        id: create_release
         uses: softprops/action-gh-release@v1
         with:
           files: artifacts/**/*

@@ -1,0 +1,39 @@
+Go Gallery - Windows Installation Guide
+========================================
+
+1. Extract this archive to a folder, e.g. C:\go_gal\
+
+2. Open PowerShell and run the application:
+
+   cd C:\go_gal
+   .\go_gal.exe --host=0.0.0.0 --port=8080
+
+3. Open your browser and go to http://localhost:8080
+
+------------------------------------------------------------------------
+OPTIONAL - Run as a Windows Service (using NSSM)
+------------------------------------------------------------------------
+
+Download NSSM from https://nssm.cc/download, then:
+
+   nssm install go_gal "C:\go_gal\go_gal.exe"
+
+In the NSSM GUI set the "Startup directory" to C:\go_gal, then:
+
+   nssm start go_gal
+
+------------------------------------------------------------------------
+ENVIRONMENT VARIABLES (recommended for production)
+------------------------------------------------------------------------
+
+Set these in PowerShell before starting the application:
+
+   $env:GO_GAL_SESSION_KEY = "your-random-secure-key"
+   $env:GO_GAL_SALT        = "your-random-secure-salt"
+   .\go_gal.exe --host=0.0.0.0 --port=8080
+
+------------------------------------------------------------------------
+FFmpeg (optional, for video thumbnails)
+------------------------------------------------------------------------
+
+Download from https://ffmpeg.org/download.html and add ffmpeg.exe to PATH.
