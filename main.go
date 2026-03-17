@@ -1603,36 +1603,34 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// For thumbnails, we need to read the file (thumbnails are for small images/videos anyway)
-		// Seek back to start if possible, otherwise we'll skip thumbnail generation for large files
-		if seeker, ok := file.(io.Seeker); ok {
-			seeker.Seek(0, io.SeekStart)
-			fileData, err := io.ReadAll(file)
-			if err == nil && (isImageFile(header.Filename) || isVideoFile(header.Filename)) {
-				thumbnailData, err := createThumbnail(fileData, header.Filename, passwordHash)
-				if err != nil {
-					log.Printf("Warning: Failed to generate thumbnail for %s: %v", header.Filename, err)
-					// Generate placeholder thumbnail instead
-					placeholderData := generatePlaceholderImage(header.Filename)
-					thumbnailData = placeholderData
+		// Generate thumbnail: for video files use placeholder to avoid loading large files into memory
+		if isImageFile(header.Filename) || isVideoFile(header.Filename) {
+			var thumbnailData []byte
+			if isVideoFile(header.Filename) {
+				// Video files can be very large; use placeholder to avoid OOM
+				thumbnailData = generatePlaceholderImage(header.Filename)
+			} else if seeker, ok := file.(io.Seeker); ok {
+				seeker.Seek(0, io.SeekStart)
+				fileData, err := io.ReadAll(file)
+				if err == nil {
+					thumbnailData, err = createThumbnail(fileData, header.Filename, passwordHash)
+					if err != nil {
+						log.Printf("Warning: Failed to generate thumbnail for %s: %v", header.Filename, err)
+						thumbnailData = generatePlaceholderImage(header.Filename)
+					}
 				}
-
-				// Save encrypted thumbnail (either real thumbnail or placeholder)
+			}
+			if thumbnailData != nil {
 				thumbnailDir := filepath.Join(thumbnailsDir, cleanDir)
-				err = os.MkdirAll(thumbnailDir, 0750)
-				if err != nil {
+				if err := os.MkdirAll(thumbnailDir, 0750); err != nil {
 					log.Printf("Warning: Failed to create thumbnail directory: %v", err)
 				} else {
 					thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
-					err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
-					if err != nil {
+					if err := encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash); err != nil {
 						log.Printf("Warning: Failed to save thumbnail for %s: %v", header.Filename, err)
 					}
 				}
 			}
-		} else {
-			// For non-seekable streams, we can't generate thumbnails
-			log.Printf("Info: Skipping thumbnail generation for non-seekable stream: %s", header.Filename)
 		}
 	} else {
 		// Process multiple files
@@ -1660,34 +1658,34 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 
-			// For thumbnails, we need to read the file
-			if seeker, ok := file.(io.Seeker); ok {
-				seeker.Seek(0, io.SeekStart)
-				fileData, err := io.ReadAll(file)
-				if err == nil && (isImageFile(fileHeader.Filename) || isVideoFile(fileHeader.Filename)) {
-					thumbnailData, err := createThumbnail(fileData, fileHeader.Filename, passwordHash)
-					if err != nil {
-						log.Printf("Warning: Failed to generate thumbnail for %s: %v", fileHeader.Filename, err)
-						// Generate placeholder thumbnail instead
-						placeholderData := generatePlaceholderImage(fileHeader.Filename)
-						thumbnailData = placeholderData
+			// Generate thumbnail: for video files use placeholder to avoid loading large files into memory
+			if isImageFile(fileHeader.Filename) || isVideoFile(fileHeader.Filename) {
+				var thumbnailData []byte
+				if isVideoFile(fileHeader.Filename) {
+					// Video files can be very large; use placeholder to avoid OOM
+					thumbnailData = generatePlaceholderImage(fileHeader.Filename)
+				} else if seeker, ok := file.(io.Seeker); ok {
+					seeker.Seek(0, io.SeekStart)
+					fileData, err := io.ReadAll(file)
+					if err == nil {
+						thumbnailData, err = createThumbnail(fileData, fileHeader.Filename, passwordHash)
+						if err != nil {
+							log.Printf("Warning: Failed to generate thumbnail for %s: %v", fileHeader.Filename, err)
+							thumbnailData = generatePlaceholderImage(fileHeader.Filename)
+						}
 					}
-
-					// Save encrypted thumbnail (either real thumbnail or placeholder)
+				}
+				if thumbnailData != nil {
 					thumbnailDir := filepath.Join(thumbnailsDir, cleanDir)
-					err = os.MkdirAll(thumbnailDir, 0750)
-					if err != nil {
+					if err := os.MkdirAll(thumbnailDir, 0750); err != nil {
 						log.Printf("Warning: Failed to create thumbnail directory: %v", err)
 					} else {
 						thumbnailPath := filepath.Join(thumbnailDir, encFileName+encryptedExt)
-						err = encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash)
-						if err != nil {
+						if err := encryptAndSaveFile(thumbnailData, thumbnailPath, passwordHash); err != nil {
 							log.Printf("Warning: Failed to save thumbnail for %s: %v", fileHeader.Filename, err)
 						}
 					}
 				}
-			} else {
-				log.Printf("Info: Skipping thumbnail generation for non-seekable stream: %s", fileHeader.Filename)
 			}
 		}
 	}
@@ -2769,39 +2767,54 @@ func encryptAndSaveFileStreamV2(reader io.Reader, path string, passwordHash stri
 	}
 	stream := cipher.NewCFBEncrypter(block, iv)
 
-	var encryptedBuffer bytes.Buffer
-	encryptionWriter := &cipherWriteWriter{
-		stream: stream,
-		writer: &encryptedBuffer,
-	}
-
-	buf := make([]byte, 32*1024)
-	if _, err = io.CopyBuffer(encryptionWriter, reader, buf); err != nil {
-		return err
-	}
-
-	// HMAC includes IV
-	h := hmac.New(sha256.New, key)
-	h.Write(iv)
-	h.Write(encryptedBuffer.Bytes())
-	mac := h.Sum(nil) // 32 bytes
-
 	f, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer f.Close()
 
+	// Write header: magic + IV + placeholder HMAC (will be overwritten after streaming)
 	if _, err := f.Write([]byte{fileFormatV2Magic}); err != nil {
 		return err
 	}
 	if _, err := f.Write(iv); err != nil {
 		return err
 	}
-	if _, err := f.Write(mac); err != nil {
+	macPlaceholder := make([]byte, 32)
+	if _, err := f.Write(macPlaceholder); err != nil {
 		return err
 	}
-	if _, err := f.Write(encryptedBuffer.Bytes()); err != nil {
+
+	// Stream: encrypt input → write to file AND compute HMAC on the fly
+	// HMAC covers IV + ciphertext (same as v2 format)
+	h := hmac.New(sha256.New, key)
+	h.Write(iv)
+
+	plainBuf := make([]byte, 32*1024)
+	encBuf := make([]byte, 32*1024)
+	for {
+		n, readErr := reader.Read(plainBuf)
+		if n > 0 {
+			stream.XORKeyStream(encBuf[:n], plainBuf[:n])
+			h.Write(encBuf[:n])
+			if _, err := f.Write(encBuf[:n]); err != nil {
+				return err
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+
+	// Seek back to HMAC position (1 magic + 16 IV = offset 17) and write real HMAC
+	mac := h.Sum(nil)
+	if _, err := f.Seek(1+aes.BlockSize, io.SeekStart); err != nil {
+		return err
+	}
+	if _, err := f.Write(mac); err != nil {
 		return err
 	}
 	return nil
