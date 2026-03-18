@@ -129,6 +129,16 @@ chmod +x "$INSTALL_DIR/$BINARY_NAME"
 cp -r templates "$INSTALL_DIR/" 2>/dev/null || echo "Warning: templates directory not found"
 cp -r static "$INSTALL_DIR/" 2>/dev/null || echo "Warning: static directory not found"
 
+if [ -f "uninstall.sh" ]; then
+  cp uninstall.sh "$INSTALL_DIR/"
+  chmod +x "$INSTALL_DIR/uninstall.sh"
+fi
+
+if [ -f "update.sh" ]; then
+  cp update.sh "$INSTALL_DIR/"
+  chmod +x "$INSTALL_DIR/update.sh"
+fi
+
 if [ ! -f "$INSTALL_DIR/static/images/favicon.ico" ]; then
   echo "Warning: favicon.ico not found - browsers may show default icon"
 fi

@@ -62,6 +62,9 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
         run: |
           ARCHIVE_NAME="go_gal_${{ matrix.goos }}_${{ matrix.goarch }}"
+          VERSION="${GITHUB_REF#refs/tags/}"
+          COMMIT="${GITHUB_SHA:0:7}"
+          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
             BINARY="go_gal.exe"
@@ -69,21 +72,19 @@ jobs:
             BINARY="go_gal"
           fi
 
-          # Build the binary
-          go build -v -ldflags="-s -w" -o "dist/${BINARY}" .
+          go build -v -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${BUILD_DATE}" -o "dist/${BINARY}" .
 
-          # Copy required runtime files
           cp -r templates dist/
           cp -r static dist/
 
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            # Windows: include a plain-text install guide
             cp INSTALL_WINDOWS.txt dist/INSTALL.txt
+            cp update.ps1 dist/
             cd dist && zip -r "../${ARCHIVE_NAME}.zip" .
           else
-            # Linux/macOS: include install and uninstall scripts
             cp install.sh dist/
             cp uninstall.sh dist/
+            cp update.sh dist/
             if [ "${{ matrix.goos }}" = "linux" ]; then
               cp go_gal.service dist/
             fi

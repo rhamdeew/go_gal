@@ -46,10 +46,10 @@ import (
 )
 
 const (
-	fileFormatV2Magic = byte(0x02)  // version byte for new file format
-	fileNameV2Magic   = byte(0x02)  // version byte for new filename format
-	fileV1Overhead    = int64(56)   // v1: 16 IV + 8 MAC_size + 32 MAC
-	fileV2Overhead    = int64(49)   // v2: 1 version + 16 IV + 32 HMAC
+	fileFormatV2Magic = byte(0x02) // version byte for new file format
+	fileNameV2Magic   = byte(0x02) // version byte for new filename format
+	fileV1Overhead    = int64(56)  // v1: 16 IV + 8 MAC_size + 32 MAC
+	fileV2Overhead    = int64(49)  // v2: 1 version + 16 IV + 32 HMAC
 )
 
 // Login rate limiter
@@ -65,65 +65,73 @@ type loginAttemptState struct {
 
 // Global variables
 var (
-	// Get executable directory for loading templates
 	execDir = func() string {
 		execPath, err := os.Executable()
 		if err != nil {
-			log.Println("Warning: Could not determine executable path, using current directory")
 			return "."
 		}
 		return filepath.Dir(execPath)
 	}()
-	templates *template.Template
-	store     = func() *sessions.CookieStore {
-		sessionKey := os.Getenv("GO_GAL_SESSION_KEY")
-		if sessionKey == "" {
-			log.Println("Warning: Using default session key. For production, set GO_GAL_SESSION_KEY environment variable.")
-			sessionKey = "gocrypto-gallery-session-key"
-		}
-		return sessions.NewCookieStore([]byte(sessionKey))
-	}()
-	saltBytes = func() []byte {
-		salt := os.Getenv("GO_GAL_SALT")
-		if salt == "" {
-			log.Println("Warning: Using default salt. For production, set GO_GAL_SALT environment variable.")
-			salt = "gallery-salt"
-		}
-		return []byte(salt)
-	}()
+	templates     *template.Template
+	store         *sessions.CookieStore
+	saltBytes     []byte
 	galleryDir    = filepath.Join(execDir, "gallery")
 	thumbnailsDir = filepath.Join(execDir, "thumbnails")
-	encryptedExt  = ".enc" // Extension for encrypted files
+	encryptedExt  = ".enc"
 )
 
-// Initialize the cookie store with proper options
-func init() {
-	// Initialize templates - this will be skipped in tests
+func isVersionFlag() bool {
+	for _, arg := range os.Args {
+		if arg == "--version" || arg == "-version" {
+			return true
+		}
+	}
+	return false
+}
+
+func initializeApp() {
+	sessionKey := os.Getenv("GO_GAL_SESSION_KEY")
+	if sessionKey == "" {
+		log.Println("Warning: Using default session key. For production, set GO_GAL_SESSION_KEY environment variable.")
+		sessionKey = "gocrypto-gallery-session-key"
+	}
+	store = sessions.NewCookieStore([]byte(sessionKey))
+
+	salt := os.Getenv("GO_GAL_SALT")
+	if salt == "" {
+		log.Println("Warning: Using default salt. For production, set GO_GAL_SALT environment variable.")
+		salt = "gallery-salt"
+	}
+	saltBytes = []byte(salt)
+
 	templatesPath := filepath.Join(execDir, "templates", "*.html")
 	var err error
 	templates, err = template.ParseGlob(templatesPath)
 	if err != nil {
-		// In test environment, create a minimal template
 		if strings.Contains(execDir, "go-build") || strings.Contains(execDir, "test") {
 			log.Println("Running in test environment, using mock templates")
 			templates = template.Must(template.New("login.html").Parse(`<html><body>Login Form {{if .Error}}{{.Error}}{{end}}</body></html>`))
 			template.Must(templates.New("gallery.html").Parse(`<html><body>Gallery {{if .Error}}{{.Error}}{{end}}</body></html>`))
 		} else {
-			// In production, this is a fatal error
 			log.Fatalf("Failed to parse templates from %s: %v", templatesPath, err)
 		}
 	}
 
-	// Detect if SSL/TLS is enabled through environment variable
 	sslEnabled := os.Getenv("GO_GAL_SSL_ENABLED") == "true"
-
 	store.Options = &sessions.Options{
 		Path:     "/",
-		MaxAge:   15 * 60, // 15 minutes
+		MaxAge:   15 * 60,
 		HttpOnly: true,
-		Secure:   sslEnabled, // Only set to true when running with HTTPS
+		Secure:   sslEnabled,
 		SameSite: http.SameSiteLaxMode,
 	}
+}
+
+func init() {
+	if isVersionFlag() {
+		return
+	}
+	initializeApp()
 }
 
 // GalleryItem represents a file or folder in the gallery
@@ -200,8 +208,13 @@ func buildBreadcrumbs(currentPath string, passwordHash string) []Breadcrumb {
 	return breadcrumbs
 }
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 func main() {
-	// Parse command-line flags
 	port := flag.String("port", "8080", "Port to listen on")
 	host := flag.String("host", "localhost", "Host IP address to bind to")
 	enableSSL := flag.Bool("ssl", false, "Enable HTTPS with self-signed certificates")
@@ -212,7 +225,13 @@ func main() {
 	acmeDomain := flag.String("acme-domain", "", "Domain name for Let's Encrypt certificate")
 	acmeCacheDir := flag.String("acme-cache", "acme-cache", "Directory to cache Let's Encrypt certificates")
 	migrate := flag.Bool("migrate", false, "Migrate gallery files from v1 to v2 encryption format")
+	showVersion := flag.Bool("version", false, "Show version information")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("go_gal %s (commit: %s, built: %s)\n", version, commit, date)
+		os.Exit(0)
+	}
 
 	if *migrate {
 		reader := bufio.NewReader(os.Stdin)
@@ -2330,7 +2349,7 @@ func validateRedirectPath(cleanDir string) string {
 			// Suspicious path detected, redirect to root gallery
 			return "/gallery/"
 		}
-		
+
 		// Strip any leading slash from cleanDir to avoid double slashes
 		redirectDir := strings.TrimPrefix(cleanDir, "/")
 		redirectPath = "/gallery/" + redirectDir
