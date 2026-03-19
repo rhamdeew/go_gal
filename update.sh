@@ -13,15 +13,15 @@ YELLOW='\033[1;33m'
 NC='\033[0m'
 
 log_info() {
-    echo -e "${GREEN}[INFO]${NC} $1"
+    echo -e "${GREEN}[INFO]${NC} $1" >&2
 }
 
 log_warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
+    echo -e "${YELLOW}[WARN]${NC} $1" >&2
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1"
+    echo -e "${RED}[ERROR]${NC} $1" >&2
 }
 
 detect_platform() {
@@ -119,8 +119,12 @@ stop_service() {
 
 start_service() {
     log_info "Starting service..."
-    systemctl start "$SERVICE_NAME"
+    systemctl start "$SERVICE_NAME" || true
     systemctl status "$SERVICE_NAME" --no-pager
+    if ! systemctl is-active --quiet "$SERVICE_NAME"; then
+        log_error "Service failed to start. Check logs with: journalctl -u $SERVICE_NAME"
+        return 1
+    fi
 }
 
 update_files() {
@@ -289,7 +293,13 @@ main() {
     
     echo ""
     log_info "Update complete! Version: $target_version"
-    log_info "Service is running at http://localhost:${PORT:-8080}"
+    if echo "$SSL_OPTS" | grep -q -- '--acme'; then
+        log_info "Service is running at https://localhost:443"
+    elif echo "$SSL_OPTS" | grep -q -- '--ssl'; then
+        log_info "Service is running at https://localhost:${PORT:-8080}"
+    else
+        log_info "Service is running at http://localhost:${PORT:-8080}"
+    fi
 }
 
 main "$@"
