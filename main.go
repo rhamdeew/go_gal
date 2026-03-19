@@ -59,8 +59,9 @@ var (
 )
 
 type loginAttemptState struct {
-	count   int
-	resetAt time.Time
+	count       int
+	resetAt     time.Time
+	lockedUntil time.Time
 }
 
 // Global variables
@@ -702,10 +703,12 @@ func loginHandler(w http.ResponseWriter, r *http.Request) {
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		clientIP = host
 	}
-	if !checkLoginRateLimit(clientIP) {
+	delay, allowed := loginDelay(clientIP)
+	if !allowed {
 		http.Error(w, "Too many login attempts. Please try again later.", http.StatusTooManyRequests)
 		return
 	}
+	time.Sleep(delay)
 
 	// Store password hash in session for later decryption
 	// We don't store the actual password
@@ -2377,29 +2380,56 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// checkLoginRateLimit returns true if the IP is allowed to attempt login
-func checkLoginRateLimit(ip string) bool {
-	const maxAttempts = 10
-	const windowDuration = 15 * time.Minute
+// loginDelay returns the delay to apply before responding and whether the IP is allowed.
+// Implements exponential backoff: 1s, 2s, 4s, 8s… capped at maxDelay.
+// After maxAttempts the IP is locked for lockoutDuration.
+func loginDelay(ip string) (time.Duration, bool) {
+	const (
+		maxAttempts     = 10
+		windowDuration  = 15 * time.Minute
+		lockoutDuration = 15 * time.Minute
+		maxDelay        = 64 * time.Second
+	)
 
 	loginMu.Lock()
 	defer loginMu.Unlock()
 
-	state, exists := loginCounts[ip]
+	// Cleanup stale entries to prevent unbounded memory growth.
 	now := time.Now()
-
-	if !exists || now.After(state.resetAt) {
-		loginCounts[ip] = loginAttemptState{count: 1, resetAt: now.Add(windowDuration)}
-		return true
+	for k, s := range loginCounts {
+		if now.After(s.resetAt) && now.After(s.lockedUntil) {
+			delete(loginCounts, k)
+		}
 	}
 
-	if state.count >= maxAttempts {
-		return false
+	state, exists := loginCounts[ip]
+
+	// Hard block: IP is locked out.
+	if exists && now.Before(state.lockedUntil) {
+		return 0, false
+	}
+
+	// Fresh or expired window: reset to first attempt with base 1s delay.
+	if !exists || now.After(state.resetAt) {
+		loginCounts[ip] = loginAttemptState{count: 1, resetAt: now.Add(windowDuration)}
+		return time.Second, true
 	}
 
 	state.count++
+
+	// Exponential delay: 2^(count-1) seconds, capped at maxDelay.
+	delay := time.Duration(uint(1)<<uint(state.count-1)) * time.Second
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+
+	// Lock out IP after maxAttempts.
+	if state.count >= maxAttempts {
+		state.lockedUntil = now.Add(lockoutDuration)
+	}
+
 	loginCounts[ip] = state
-	return true
+	return delay, true
 }
 
 // hashPasswordLegacy uses SHA256 — kept for migration compatibility only
