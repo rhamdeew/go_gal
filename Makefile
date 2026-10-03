@@ -1,4 +1,4 @@
-.PHONY: build run clean all test test-coverage help deps
+.PHONY: build run clean reset all test test-coverage help deps
 
 # Default target - display help
 .DEFAULT_GOAL := help
@@ -30,6 +30,18 @@ run-ssl: build ## Build and run with SSL enabled on port 8443
 
 clean: ## Remove build artifacts
 	rm -f go_gal
+
+reset: ## Stop the server and delete all local gallery files and thumbnails (irreversible)
+	@printf "This will stop go_gal and permanently delete gallery/ and thumbnails/. Continue? [y/N] "; \
+	read answer; \
+	case "$$answer" in \
+		[yY]|[yY][eE][sS]) ;; \
+		*) echo "Aborted."; exit 1 ;; \
+	esac
+	@if pkill -x go_gal; then echo "Stopped running go_gal."; sleep 1; fi
+	find gallery -mindepth 1 ! -name .empty -delete
+	rm -rf thumbnails
+	@echo "Local store reset."
 
 deps: ## Download Go module dependencies
 	go mod download

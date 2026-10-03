@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -36,6 +37,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/sessions"
@@ -50,6 +52,11 @@ const (
 	fileNameV2Magic   = byte(0x02) // version byte for new filename format
 	fileV1Overhead    = int64(56)  // v1: 16 IV + 8 MAC_size + 32 MAC
 	fileV2Overhead    = int64(49)  // v2: 1 version + 16 IV + 32 HMAC
+
+	// maxFileNameBytes is the longest plaintext filename (in bytes) whose v2
+	// encrypted form fits the 255-byte filesystem limit:
+	// hex(1 version + 12 nonce + name + 16 GCM tag) + ".enc" <= 255
+	maxFileNameBytes = (255-len(".enc"))/2 - 1 - 12 - 16 // 96
 )
 
 // Login rate limiter
@@ -535,21 +542,67 @@ func generateVideoThumbnail(videoPath, outputPath string) error {
 		return fmt.Errorf("ffmpeg not found in PATH, cannot generate video thumbnails")
 	}
 
-	// Use ffmpeg to extract a frame at 1 second
-	cmd := exec.Command("ffmpeg",
-		"-i", videoPath,
-		"-ss", "00:00:01.000",
-		"-vframes", "1",
-		"-vf", "scale=200:200:force_original_aspect_ratio=decrease,pad=200:200:(ow-iw)/2:(oh-ih)/2",
-		"-y", // Overwrite output file
-		outputPath)
+	// Try a frame at 1 second first; fall back to the first frame for very short clips
+	var lastErr error
+	for _, offset := range []string{"00:00:01.000", "00:00:00.000"} {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		cmd := exec.CommandContext(ctx, "ffmpeg",
+			"-v", "error",
+			"-ss", offset, // Seek before input: fast, does not decode the whole stream
+			"-i", videoPath,
+			"-vframes", "1",
+			"-vf", "scale=200:200:force_original_aspect_ratio=decrease,pad=200:200:(ow-iw)/2:(oh-ih)/2",
+			"-y", // Overwrite output file
+			outputPath)
+		output, err := cmd.CombinedOutput()
+		cancel()
 
-	err = cmd.Run()
-	if err != nil {
-		return fmt.Errorf("ffmpeg failed: %v", err)
+		if err != nil {
+			lastErr = fmt.Errorf("ffmpeg failed: %v: %s", err, strings.TrimSpace(string(output)))
+			continue
+		}
+		if info, statErr := os.Stat(outputPath); statErr == nil && info.Size() > 0 {
+			return nil
+		}
+		lastErr = fmt.Errorf("ffmpeg produced no frame at %s", offset)
 	}
 
-	return nil
+	return lastErr
+}
+
+// generateVideoThumbnailFromReader streams video data to a private temp file
+// and extracts a thumbnail with ffmpeg, without holding the video in memory
+func generateVideoThumbnailFromReader(r io.Reader, filename string) ([]byte, error) {
+	tempDir, err := os.MkdirTemp("", "go_gal_thumb_*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp directory: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	tempVideoPath := filepath.Join(tempDir, "video"+filepath.Ext(filename))
+	tempThumbnailPath := filepath.Join(tempDir, "thumbnail.jpg")
+
+	videoFile, err := os.Create(tempVideoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp video file: %v", err)
+	}
+	if _, err := io.Copy(videoFile, r); err != nil {
+		videoFile.Close()
+		return nil, fmt.Errorf("failed to write temp video file: %v", err)
+	}
+	if err := videoFile.Close(); err != nil {
+		return nil, fmt.Errorf("failed to write temp video file: %v", err)
+	}
+
+	if err := generateVideoThumbnail(tempVideoPath, tempThumbnailPath); err != nil {
+		return nil, fmt.Errorf("failed to generate video thumbnail: %v", err)
+	}
+
+	thumbnailData, err := os.ReadFile(tempThumbnailPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read generated thumbnail: %v", err)
+	}
+	return thumbnailData, nil
 }
 
 // createThumbnail generates and saves an encrypted thumbnail
@@ -563,33 +616,9 @@ func createThumbnail(originalData []byte, filename string, passwordHash string) 
 			return nil, fmt.Errorf("failed to generate image thumbnail: %v", err)
 		}
 	} else if isVideoFile(filename) {
-		// For videos, we need to temporarily save the file to process it with ffmpeg
-		tempDir := filepath.Join(os.TempDir(), "go_gal_temp")
-		err := os.MkdirAll(tempDir, 0755)
+		thumbnailData, err = generateVideoThumbnailFromReader(bytes.NewReader(originalData), filename)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create temp directory: %v", err)
-		}
-		defer os.RemoveAll(tempDir)
-
-		tempVideoPath := filepath.Join(tempDir, "temp_video"+filepath.Ext(filename))
-		tempThumbnailPath := filepath.Join(tempDir, "thumbnail.jpg")
-
-		// Write video data to temp file
-		err = os.WriteFile(tempVideoPath, originalData, 0644)
-		if err != nil {
-			return nil, fmt.Errorf("failed to write temp video file: %v", err)
-		}
-
-		// Generate thumbnail
-		err = generateVideoThumbnail(tempVideoPath, tempThumbnailPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to generate video thumbnail: %v", err)
-		}
-
-		// Read the generated thumbnail
-		thumbnailData, err = os.ReadFile(tempThumbnailPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read generated thumbnail: %v", err)
+			return nil, err
 		}
 	} else {
 		return nil, fmt.Errorf("unsupported file type for thumbnail generation")
@@ -1634,8 +1663,16 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		// Generate thumbnail: for video files use placeholder to avoid loading large files into memory
 		if isImageFile(header.Filename) || isVideoFile(header.Filename) {
 			var thumbnailData []byte
-			if isVideoFile(header.Filename) {
-				// Video files can be very large; use placeholder to avoid OOM
+			if seeker, ok := file.(io.Seeker); ok && isVideoFile(header.Filename) {
+				// Stream the video to a temp file for ffmpeg instead of reading it into memory
+				var err error
+				seeker.Seek(0, io.SeekStart)
+				thumbnailData, err = generateVideoThumbnailFromReader(file, header.Filename)
+				if err != nil {
+					log.Printf("Warning: Failed to generate thumbnail for %s: %v", header.Filename, err)
+					thumbnailData = generatePlaceholderImage(header.Filename)
+				}
+			} else if isVideoFile(header.Filename) {
 				thumbnailData = generatePlaceholderImage(header.Filename)
 			} else if seeker, ok := file.(io.Seeker); ok {
 				seeker.Seek(0, io.SeekStart)
@@ -1689,8 +1726,16 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 			// Generate thumbnail: for video files use placeholder to avoid loading large files into memory
 			if isImageFile(fileHeader.Filename) || isVideoFile(fileHeader.Filename) {
 				var thumbnailData []byte
-				if isVideoFile(fileHeader.Filename) {
-					// Video files can be very large; use placeholder to avoid OOM
+				if seeker, ok := file.(io.Seeker); ok && isVideoFile(fileHeader.Filename) {
+					// Stream the video to a temp file for ffmpeg instead of reading it into memory
+					var err error
+					seeker.Seek(0, io.SeekStart)
+					thumbnailData, err = generateVideoThumbnailFromReader(file, fileHeader.Filename)
+					if err != nil {
+						log.Printf("Warning: Failed to generate thumbnail for %s: %v", fileHeader.Filename, err)
+						thumbnailData = generatePlaceholderImage(fileHeader.Filename)
+					}
+				} else if isVideoFile(fileHeader.Filename) {
 					thumbnailData = generatePlaceholderImage(fileHeader.Filename)
 				} else if seeker, ok := file.(io.Seeker); ok {
 					seeker.Seek(0, io.SeekStart)
@@ -2574,7 +2619,7 @@ func decryptFileNameV2(encryptedHex string, passwordHash string) (string, error)
 
 // encryptFileName encrypts a filename using v2 (AES-GCM) format
 func encryptFileName(filename string, passwordHash string) (string, error) {
-	maxBaseLength := 100
+	maxBaseLength := maxFileNameBytes
 
 	if len(filename) > maxBaseLength {
 		ext := filepath.Ext(filename)
@@ -2586,19 +2631,32 @@ func encryptFileName(filename string, passwordHash string) (string, error) {
 
 		availableLength := maxBaseLength - len(hashStr) - len(ext) - 1
 		if availableLength < 10 {
-			availableLength = 10
+			// Extension is too long to keep; drop it so the name still fits
+			ext = ""
+			baseName = filename
+			availableLength = maxBaseLength - len(hashStr) - 1
 		}
 
-		if len(baseName) > availableLength {
-			baseName = baseName[:availableLength]
-		}
+		baseName = truncateUTF8(baseName, availableLength)
 
 		originalLength := len(filename)
 		filename = baseName + "_" + hashStr + ext
-		log.Printf("Trimmed long filename from %d to %d characters", originalLength, len(filename))
+		log.Printf("Trimmed long filename from %d to %d bytes", originalLength, len(filename))
 	}
 
 	return encryptFileNameV2(filename, passwordHash)
+}
+
+// truncateUTF8 cuts s to at most maxBytes without splitting a multi-byte character
+func truncateUTF8(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	s = s[:maxBytes]
+	for len(s) > 0 && !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
 }
 
 // decryptFileName decrypts a filename, detecting v1 or v2 format
