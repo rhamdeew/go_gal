@@ -152,10 +152,11 @@ type GalleryItem struct {
 
 // PageData contains data for template rendering
 type PageData struct {
-	CurrentPath string
-	Items       []GalleryItem
-	Error       string
-	Breadcrumbs []Breadcrumb
+	CurrentPath    string
+	Items          []GalleryItem
+	Error          string
+	Breadcrumbs    []Breadcrumb
+	MaxUploadBytes int64
 }
 
 // Breadcrumb represents a path segment in the navigation
@@ -216,6 +217,9 @@ func buildBreadcrumbs(currentPath string, passwordHash string) []Breadcrumb {
 	return breadcrumbs
 }
 
+// maxUploadBytes is the largest single upload accepted; set by --max-upload-mb
+var maxUploadBytes int64 = 2048 << 20
+
 var (
 	version = "dev"
 	commit  = "none"
@@ -234,7 +238,13 @@ func main() {
 	acmeCacheDir := flag.String("acme-cache", "acme-cache", "Directory to cache Let's Encrypt certificates")
 	migrate := flag.Bool("migrate", false, "Migrate gallery files from v1 to v2 encryption format")
 	showVersion := flag.Bool("version", false, "Show version information")
+	maxUploadMB := flag.Int64("max-upload-mb", 2048, "Maximum size of a single uploaded file in megabytes")
 	flag.Parse()
+
+	if *maxUploadMB <= 0 {
+		log.Fatalf("--max-upload-mb must be positive, got %d", *maxUploadMB)
+	}
+	maxUploadBytes = *maxUploadMB << 20
 
 	if *showVersion {
 		fmt.Printf("go_gal %s (commit: %s, built: %s)\n", version, commit, date)
@@ -896,9 +906,10 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := templates.ExecuteTemplate(w, "gallery.html", PageData{
-		CurrentPath: cleanPath,
-		Items:       items,
-		Breadcrumbs: buildBreadcrumbs(cleanPath, passwordHash),
+		CurrentPath:    cleanPath,
+		Items:          items,
+		Breadcrumbs:    buildBreadcrumbs(cleanPath, passwordHash),
+		MaxUploadBytes: maxUploadBytes,
 	}); err != nil {
 		log.Printf("Error executing template: %v", err)
 		http.Error(w, "Error rendering template", http.StatusInternalServerError)
@@ -1589,6 +1600,19 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reject oversized uploads before anything reads the body.
+	// Allow 1 MB on top of the file for multipart headers and form fields.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes+1<<20)
+	if err := r.ParseMultipartForm(10 << 20); err != nil { // 10 MB max memory
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			http.Error(w, fmt.Sprintf("File too large (max %d MB)", maxUploadBytes>>20), http.StatusRequestEntityTooLarge)
+			return
+		}
+		http.Error(w, "Error parsing form", http.StatusBadRequest)
+		return
+	}
+
 	// Get the directory to upload to
 	currentDir := r.FormValue("currentDir")
 	if currentDir == "" {
@@ -1624,13 +1648,6 @@ func uploadHandler(w http.ResponseWriter, r *http.Request) {
 	// Ensure it's a directory
 	if !info.IsDir() {
 		http.Error(w, "Upload target is not a directory", http.StatusBadRequest)
-		return
-	}
-
-	// Parse the multipart form with a reasonable max memory
-	err = r.ParseMultipartForm(10 << 20) // 10 MB max memory
-	if err != nil {
-		http.Error(w, "Error parsing form", http.StatusBadRequest)
 		return
 	}
 

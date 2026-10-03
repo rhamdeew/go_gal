@@ -18,7 +18,7 @@ Password-protected web gallery with client-side encryption. All folders and file
 - Automatic thumbnail generation for images and videos
 - Fast gallery browsing with thumbnail previews
 - Create new folders with encrypted names
-- Upload images and videos (multi-file with drag-and-drop)
+- Upload images and videos (multi-file with drag-and-drop), up to 2 GB per file by default (configurable)
 - Support for video formats: MP4, MOV, AVI, MKV, WebM, 3GP, FLV, WMV, M4V
 - Support for image formats: JPEG, PNG, GIF, WebP
 - Built-in video player
@@ -111,6 +111,27 @@ For video thumbnail generation, install FFmpeg:
 - **Windows**: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH
 
 Image thumbnails work without FFmpeg. Video files can still be uploaded and viewed — placeholder images will be shown instead of actual video thumbnails.
+
+Video thumbnails are created at upload time from the frame at 1 second (or the first frame for shorter clips). Videos uploaded before FFmpeg was installed keep their placeholder; re-upload them to get a real thumbnail.
+
+### Upload limits
+
+- **File size**: 2 GB per file by default. Change it with `--max-upload-mb`, e.g. `--max-upload-mb=4096` for 4 GB. Oversized files are rejected in the browser before sending; the server also enforces the limit and returns `413`.
+- **Time**: each upload must finish within 30 minutes. On slow connections this caps the practical file size (about 2 GB at 10 Mbit/s).
+- **Disk space**: an upload temporarily needs about 3× the file size (upload buffer + encrypted copy + a temp copy for video thumbnails).
+- **Reverse proxy**: if go_gal runs behind nginx, raise its limit too — nginx rejects bodies over 1 MB by default:
+  ```nginx
+  client_max_body_size 2048m;
+  ```
+- **Long filenames** are shortened to fit the 255-byte filesystem limit after encryption: names over 96 bytes (about 48 Cyrillic or 96 Latin characters) are trimmed and get a short hash suffix, keeping the extension.
+
+To change the limit for the systemd service, add the flag to `ExecStart` in `/etc/systemd/system/go_gal.service`:
+
+```
+ExecStart=/opt/go_gal/go_gal --port=${PORT} --host=${HOST} $SSL_OPTS --max-upload-mb=4096
+```
+
+Then apply it with `sudo systemctl daemon-reload && sudo systemctl restart go_gal`. `update.sh` keeps this line; re-running `install.sh` resets it.
 
 ## Updating
 
@@ -319,9 +340,25 @@ Command line arguments:
 --acme-domain=<host>   Domain name for the Let's Encrypt certificate (required with --acme)
 --acme-email=<email>   Email address for Let's Encrypt notifications
 --acme-cache=<dir>     Directory to cache Let's Encrypt certificates (default: acme-cache)
+--max-upload-mb=<n>    Maximum size of a single uploaded file in MB (default: 2048)
 --migrate              Migrate gallery files from v1 to v2 encryption format
 --version              Show version information
 ```
+
+## Make Targets
+
+```bash
+make build           # Build the binary
+make run             # Build and run on http://localhost:8080
+make run-ssl         # Build and run with HTTPS on port 8443
+make test            # Run all tests
+make test-coverage   # Run tests and open the coverage report
+make reset           # Stop go_gal and delete local gallery/ and thumbnails/ (asks for confirmation)
+make deps            # Download Go module dependencies
+make clean           # Remove the binary
+```
+
+`make reset` is for local development: it permanently deletes every uploaded file and thumbnail.
 
 ## Testing
 

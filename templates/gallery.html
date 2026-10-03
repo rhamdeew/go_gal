@@ -53,7 +53,7 @@
                 </h3>
                 <div id="drop-area" class="drop-area">
                     <p>Drag & drop media here or</p>
-                    <form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data">
+                    <form id="upload-form" action="/upload" method="POST" enctype="multipart/form-data" data-max-upload-bytes="{{.MaxUploadBytes}}">
                         <input type="hidden" name="currentDir" value="{{.CurrentPath}}">
                         <input type="file" id="file-input" name="files" accept="image/*,video/*" multiple required style="display:none;">
                         <button type="button" id="select-files-btn" class="btn">Browse Files</button>
@@ -389,6 +389,13 @@
                     statusElement.className = 'file-status uploading';
 
                     try {
+                        // Check size before sending: the server drops oversized
+                        // uploads mid-stream, which browsers report as a network error
+                        const maxBytes = Number(document.getElementById('upload-form').dataset.maxUploadBytes) || 0;
+                        if (maxBytes > 0 && file.size > maxBytes) {
+                            throw new Error('File too large (max ' + Math.floor(maxBytes / 1048576) + ' MB)');
+                        }
+
                         const formData = new FormData();
                         formData.append('file', file);
                         formData.append('currentDir', document.querySelector('input[name="currentDir"]').value);
