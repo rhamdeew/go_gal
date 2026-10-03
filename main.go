@@ -813,12 +813,14 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 
 	var items []GalleryItem
 	var wrongPasswordDetected bool
+	var decryptFailures, encryptedCount int
 
 	for _, file := range files {
 		name := file.Name()
 
 		// For both directories and files, check if they have the encrypted extension
 		if strings.HasSuffix(name, encryptedExt) {
+			encryptedCount++
 			encName := strings.TrimSuffix(name, encryptedExt)
 			decryptedName, err := decryptFileName(encName, passwordHash)
 
@@ -827,7 +829,7 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 				if strings.Contains(err.Error(), "incorrect password") {
 					wrongPasswordDetected = true
 				}
-				log.Printf("Error decrypting filename %s: %v", name, err)
+				decryptFailures++
 				continue
 			}
 
@@ -844,6 +846,10 @@ func galleryHandler(w http.ResponseWriter, r *http.Request) {
 				EncPath: name,
 			})
 		}
+	}
+
+	if decryptFailures > 0 {
+		log.Printf("Failed to decrypt %d of %d filenames in %s", decryptFailures, encryptedCount, fsPath)
 	}
 
 	// If we detected wrong password and couldn't decrypt any files
